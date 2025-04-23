@@ -1,0 +1,1 @@
+// Encrypt and Decrpyt files if user want while saving (any encryption algo)
