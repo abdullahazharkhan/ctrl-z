@@ -1,0 +1,6 @@
+OS will work on auth.c and config.c
+ABD will work on version.c and utils.c 
+Shubair will work on encryption.c 
+Abdul Rafay will work on stats.c 
+
+extra kuch daalna ho to bta dena OK Best of Luck for project
