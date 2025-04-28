@@ -1,5 +1,10 @@
 #include <stdio.h>
-#include <stdlib.h> // for exit()
+#include <string.h>
+#include <sys/stat.h>
+#include <limits.h>
+#include <errno.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 // Function prototypes
 void browsePublicRepositories(void);
@@ -12,12 +17,19 @@ void logout(void);
 void registerUser(void);
 void exitProgram(void);
 void printProjectInfo(void);
+int initProject(int *);
 
 int main(int argc, char *argv[])
 {
-    int isSomeoneLoggedIn = 0;
-
     printProjectInfo();
+    
+    int isSomeoneLoggedIn = 0;
+    if (initProject(&isSomeoneLoggedIn) != 0)
+    {
+        fprintf(stderr, "Failed to initialize project\n");
+        return 1;
+    }
+    printf("User is %slogged in\n", isSomeoneLoggedIn ? "" : "not ");
 
     while (1)
     {
@@ -131,4 +143,79 @@ void printProjectInfo(void)
     printf("----------------------- CTRL + Z -----------------------\n");
     printf("---------------- Version Control System ----------------\n");
     printf("--------------------------------------------------------\n\n");
+}
+
+int initProject(int *isSomeoneLoggedIn)
+{
+    const char *home = getenv("HOME");
+    if (!home)
+    {
+        fprintf(stderr, "Could not get HOME directory\n");
+        return -1;
+    }
+
+    // Build path: ~/Desktop/CtrlZ
+    char dirpath[PATH_MAX];
+    snprintf(dirpath, sizeof(dirpath), "%s/Desktop/CtrlZ", home);
+
+    struct stat st = {0};
+    if (stat(dirpath, &st) == -1)
+    {
+        // Directory doesn't exist → create it
+        if (mkdir(dirpath, 0744) != 0)
+        {
+            perror("mkdir");
+            return -1;
+        }
+
+        // Create UserData.txt inside it
+        char filepath[PATH_MAX];
+        snprintf(filepath, sizeof(filepath), "%s/UserData.txt", dirpath);
+        FILE *f = fopen(filepath, "w");
+        if (!f)
+        {
+            perror("fopen");
+            return -1;
+        }
+
+        // Decide header
+        const char *loginUser = (*isSomeoneLoggedIn)
+                                    ? getenv("USER")
+                                    : "NoUserIsLoggedIn";
+        if (!loginUser)
+            loginUser = "NoUserIsLoggedIn";
+
+        fprintf(f, "CurrentlyLoggedInUser:%s\n", loginUser);
+        // You can seed additional sample users here if you like:
+        // fprintf(f, "Alice,alice,pass123\nBob,bob,secret\n");
+
+        fclose(f);
+        // If we just created, honor the passed-in flag
+        return 0;
+    }
+
+    // Directory already exists → read existing UserData.txt
+    {
+        char filepath[PATH_MAX];
+        snprintf(filepath, sizeof(filepath), "%s/UserData.txt", dirpath);
+        FILE *f = fopen(filepath, "r");
+        if (!f)
+        {
+            perror("fopen");
+            return -1;
+        }
+
+        char line[512];
+        if (fgets(line, sizeof(line), f))
+        {
+            // Check if it contains "NoUserIsLoggedIn"
+            if (strstr(line, "NoUserIsLoggedIn"))
+                *isSomeoneLoggedIn = 0;
+            else
+                *isSomeoneLoggedIn = 1;
+        }
+        fclose(f);
+    }
+
+    return 0;
 }
