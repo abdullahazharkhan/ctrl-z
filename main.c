@@ -1,15 +1,20 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <limits.h>
+#include <pthread.h>
 #include <errno.h>
 #include <unistd.h>
-#include <stdlib.h>
 #include "auth.c"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+
+// mutex for browsePublicRepositories()
+static pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Function prototypes
 void browsePublicRepositories(void);
@@ -122,7 +127,6 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void browsePublicRepositories(void) { printf("Browsing public repositories...\n"); }
 void publishRepository(void) { printf("Publishing repository...\n"); }
 void pushFiles(void) { printf("Pushing files...\n"); }
 void pullFiles(void) { printf("Pulling files...\n"); }
@@ -211,4 +215,113 @@ int initProject(int *isSomeoneLoggedIn)
     }
 
     return 0;
+}
+
+typedef struct
+{
+    char **names;   // Array of repo names
+    int start, end; // [start, end) range in that array
+    char ctrlz_path[PATH_MAX];
+} ThreadArg;
+
+// runner function for browsing public repositories
+void *thread_scan(void *arg_ptr)
+{
+    ThreadArg *arg = (ThreadArg *)arg_ptr;
+    char cfgpath[PATH_MAX + 50], line[512];
+    for (int i = arg->start; i < arg->end; i++)
+    {
+        snprintf(cfgpath, sizeof(cfgpath), "%s/%s/Config.txt",
+                 arg->ctrlz_path, arg->names[i]);
+        FILE *f = fopen(cfgpath, "r");
+        if (!f)
+            continue; // no config? skip.
+
+        while (fgets(line, sizeof(line), f))
+        {
+            if (strstr(line, "Privacy:public") || strstr(line, "Privacy:Public"))
+            {
+                pthread_mutex_lock(&print_mutex);
+                printf("Public repo: %s\n", arg->names[i]);
+                pthread_mutex_unlock(&print_mutex);
+                break;
+            }
+        }
+        fclose(f);
+    }
+    return NULL;
+}
+
+void browsePublicRepositories(void)
+{
+    // 1) build CtrlZ path
+    char ctrlz[PATH_MAX];
+    const char *home = getenv("HOME");
+    if (!home)
+        home = "";
+    snprintf(ctrlz, sizeof(ctrlz), "%s/CtrlZ", home);
+
+    // 2) collect subdirectory names
+    DIR *d = opendir(ctrlz);
+    if (!d)
+    {
+        perror("opendir CtrlZ");
+        return;
+    }
+    char **names = NULL;
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)))
+    {
+#ifdef DT_DIR
+        if (ent->d_type == DT_DIR &&
+            strcmp(ent->d_name, ".") &&
+            strcmp(ent->d_name, ".."))
+#else
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s", ctrlz, ent->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode) &&
+            strcmp(ent->d_name, ".") &&
+            strcmp(ent->d_name, ".."))
+#endif
+        {
+            names = realloc(names, sizeof(char *) * (count + 1));
+            names[count++] = strdup(ent->d_name);
+        }
+    }
+    closedir(d);
+
+    if (count == 0)
+    {
+        printf("No repositories found in %s\n", ctrlz);
+        free(names);
+        return;
+    }
+
+    // 3) start 3 threads dividing the work
+    pthread_t threads[3];
+    ThreadArg args[3];
+    int base = count / 3, rem = count % 3, idx = 0;
+    for (int t = 0; t < 3; t++)
+    {
+        int len = base + (t < rem ? 1 : 0);
+        args[t].names = names;
+        args[t].start = idx;
+        args[t].end = idx + len;
+        strncpy(args[t].ctrlz_path, ctrlz, PATH_MAX);
+        pthread_create(&threads[t], NULL, thread_scan, &args[t]);
+        idx += len;
+    }
+
+    // 4) join
+    for (int t = 0; t < 3; t++)
+    {
+        pthread_join(threads[t], NULL);
+    }
+
+    // cleanup
+    for (int i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
 }
