@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include "auth.c"
+#include "stats.c"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
