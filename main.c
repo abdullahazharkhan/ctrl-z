@@ -7,8 +7,10 @@
 #include <pthread.h>
 #include <errno.h>
 #include <unistd.h>
+#include <time.h>
 #include "auth.c"
 #include "stats.c"
+#include "utils.c"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -44,89 +46,94 @@ int main(int argc, char *argv[])
     while (1)
     {
         printf("--------------------------------------------------------\n");
-        printf("1. Browse public repositories\n");
-        printf("2. Publish your own repository\n");
-        printf("3. Push your files\n");
-        printf("4. Pull the files\n");
-        printf("5. Add collaborator to your project\n");
-        printf("6. Remove collaborator from your project\n");
         if (!isSomeoneLoggedIn)
         {
-            printf("7. Login\n");
-            printf("8. Register as a new user\n");
-            printf("9. Exit\n");
+            printf("1. Browse public repositories\n");
+            printf("2. Register as a new user\n");
+            printf("3. Login\n");
+            printf("4. Exit\n");
+            printf("--------------------------------------------------------\n");
+
+            int choice;
+            printf("Enter your choice: ");
+            if (scanf("%d", &choice) != 1)
+            {
+                printf("Invalid input. Please enter a number.\n");
+                while (getchar() != '\n');
+                continue;
+            }
+
+            switch (choice)
+            {
+            case 1:
+                browsePublicRepositories();
+                break;
+            case 2:
+                registerUser();
+                break;
+            case 3:
+                login(&isSomeoneLoggedIn);
+                break;
+            case 4:
+                printf("Exiting the program...\n");
+                exit(0);
+                break;
+            default:
+                printf("Invalid choice. Please try again.\n");
+                break;
+            }
         }
         else
         {
+            printf("1. Browse public repositories\n");
+            printf("2. Publish your own repository\n");
+            printf("3. Push your files\n");
+            printf("4. Pull the files\n");
+            printf("5. Add collaborator to your project\n");
+            printf("6. Remove collaborator from your project\n");
             printf("7. Logout\n");
             printf("8. Exit\n");
-        }
-        printf("--------------------------------------------------------\n");
+            printf("--------------------------------------------------------\n");
 
-        int choice;
-        printf("Enter your choice: ");
-        if (scanf("%d", &choice) != 1)
-        {
-            printf("Invalid input. Please enter a number.\n");
-            while (getchar() != '\n')
-                ; // clear input buffer
-            continue;
-        }
-
-        switch (choice)
-        {
-        case 1:
-            browsePublicRepositories();
-            break;
-        case 2:
-            publishRepository();
-            break;
-        case 3:
-            pushFiles();
-            break;
-        case 4:
-            pullFiles();
-            break;
-        case 5:
-            addCollaborator();
-            break;
-        case 6:
-            removeCollaborator();
-            break;
-        case 7:
-            if (isSomeoneLoggedIn)
+            int choice;
+            printf("Enter your choice: ");
+            if (scanf("%d", &choice) != 1)
             {
+                printf("Invalid input. Please enter a number.\n");
+                while (getchar() != '\n');
+                continue;
+            }
+
+            switch (choice)
+            {
+            case 1:
+                browsePublicRepositories();
+                break;
+            case 2:
+                publishRepository();
+                break;
+            case 3:
+                pushFiles();
+                break;
+            case 4:
+                pullFiles();
+                break;
+            case 5:
+                addCollaborator();
+                break;
+            case 6:
+                removeCollaborator();
+                break;
+            case 7:
                 logout(&isSomeoneLoggedIn);
-            }
-            else
-            {
-                login(&isSomeoneLoggedIn);
-            }
-            break;
-        case 8:
-            if (isSomeoneLoggedIn)
-            {
+                break;
+            case 8:
                 exitProgram();
-            }
-            else
-            {
-                registerUser();
-            }
-            break;
-        case 9:
-            if (!isSomeoneLoggedIn)
-            {
-                printf("Exiting the program...\n");
-                exit(0);
-            }
-            else
-            {
+                break;
+            default:
                 printf("Invalid choice. Please try again.\n");
+                break;
             }
-            break;
-        default:
-            printf("Invalid choice. Please try again.\n");
-            break;
         }
     }
 
@@ -134,8 +141,344 @@ int main(int argc, char *argv[])
 }
 
 void publishRepository(void) { printf("Publishing repository...\n"); }
-void pushFiles(void) { printf("Pushing files...\n"); }
-void pullFiles(void) { printf("Pulling files...\n"); }
+void pushFiles(void) {
+    char repo[100];
+    printf("Enter repository name: ");
+    scanf(" %99s", repo);
+
+    const char *home = getenv("HOME");
+    if (!home)
+    {
+        fprintf(stderr, "ERROR: HOME not set\n");
+        return;
+    }
+
+    char repoPath[PATH_MAX];
+    snprintf(repoPath, PATH_MAX, "%s/CtrlZ/%s", home, repo);
+
+    struct stat st;
+    if (stat(repoPath, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        printf("Repository '%s' does not exist in %s/CtrlZ.\n", repo, home);
+        return;
+    }
+
+    // Open Config.txt
+    char configPath[PATH_MAX];
+    snprintf(configPath, PATH_MAX, "%s/Config.txt", repoPath);
+    FILE *cfg = fopen(configPath, "r");
+    if (!cfg) {
+        perror("Could not open Config.txt");
+        return;
+    }
+
+    char author[100] = "", collaborators[1024] = "", privacy[32] = "";
+    char line[1024];
+    while (fgets(line, sizeof(line), cfg)) {
+        if (strncmp(line, "Author:", 7) == 0) {
+            char *p = line + 7;
+            while (*p == ' ' || *p == '\t') p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            strncpy(author, p, sizeof(author) - 1);
+        } else if (strncmp(line, "Collaborators:", 14) == 0) {
+            char *p = line + 14;
+            while (*p == ' ' || *p == '\t') p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            strncpy(collaborators, p, sizeof(collaborators) - 1);
+        } else if (strncmp(line, "Privacy:", 8) == 0) {
+            char *p = line + 8;
+            while (*p == ' ' || *p == '\t') p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            strncpy(privacy, p, sizeof(privacy) - 1);
+        }
+    }
+    fclose(cfg);
+
+    // Get logged in user
+    char *currentUser = getLoggedInUser();
+    if (!currentUser) {
+        printf("No user is currently logged in.\n");
+        return;
+    }
+
+    // Check if user is author or collaborator
+    int allowed = 0;
+    if (strcmp(currentUser, author) == 0) {
+        allowed = 1;
+    } else if (strlen(collaborators) > 0) {
+        char search[110];
+        snprintf(search, sizeof(search), "%s,", currentUser);
+        if (strstr(collaborators, search) != NULL) {
+            allowed = 1;
+        }
+    }
+
+    if (!allowed) {
+        printf("You are not authorized to push to this repository.\n");
+        free(currentUser);
+        return;
+    }
+
+    printf("Repository '%s' found in %s/CtrlZ.\n", repo, home);
+
+    char folderPath[PATH_MAX];
+    printf("Enter the folder path to push files from: ");
+    getchar(); // clear newline left by previous scanf
+    if (fgets(folderPath, sizeof(folderPath), stdin) == NULL) {
+        printf("Invalid folder path input.\n");
+        free(currentUser);
+        return;
+    }
+    folderPath[strcspn(folderPath, "\r\n")] = '\0'; // Remove newline
+
+    // Resolve relative paths to absolute
+    char absFolderPath[PATH_MAX];
+    if (realpath(folderPath, absFolderPath) == NULL) {
+        perror("Invalid folder path");
+        free(currentUser);
+        return;
+    }
+
+    printf("Resolved folder path: %s\n", absFolderPath);
+
+    // Find the highest Version_N in the repo directory
+    int maxVersion = 0;
+    DIR *d = opendir(repoPath);
+    if (!d) {
+        perror("opendir repoPath");
+        free(currentUser);
+        return;
+    }
+    struct dirent *ent;
+    while ((ent = readdir(d))) {
+        if (strncmp(ent->d_name, "Version_", 8) == 0) {
+            int vnum = atoi(ent->d_name + 8);
+            if (vnum > maxVersion) maxVersion = vnum;
+        }
+    }
+    closedir(d);
+
+    // Create new version directory
+    int newVersion = maxVersion + 1;
+    char newVersionPath[PATH_MAX];
+    snprintf(newVersionPath, PATH_MAX, "%s/Version_%d", repoPath, newVersion);
+
+    if (mkdir(newVersionPath, 0777) != 0) {
+        perror("mkdir new version");
+        free(currentUser);
+        return;
+    }
+
+    copyAll(absFolderPath, newVersionPath);
+
+    printf("Pushed files to %s\n", newVersionPath);
+
+    // --- New code for commit message and history tracking ---
+    // 1. Take commit message and save to pushFiles.txt
+    char message[1024];
+    printf("Enter commit message: ");
+    getchar(); // clear newline left by previous scanf
+    if (fgets(message, sizeof(message), stdin) == NULL) {
+        strcpy(message, "No message provided.");
+    }
+    message[strcspn(message, "\r\n")] = '\0'; // Remove newline
+
+    char pushFilePath[PATH_MAX];
+    snprintf(pushFilePath, PATH_MAX, "%s/pushFiles.txt", repoPath);
+    FILE *pf = fopen(pushFilePath, "w");
+    if (pf) {
+        fprintf(pf, "%s\n", message);
+        fclose(pf);
+    }
+
+    // 2. Append to History.txt in repo folder
+    char historyPath[PATH_MAX];
+    snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
+    FILE *hf = fopen(historyPath, "a");
+    if (!hf) {
+        // Try to create if not exists
+        hf = fopen(historyPath, "w");
+    }
+    if (hf) {
+        // Version and user
+        fprintf(hf, "Version_%d by %s\n", newVersion, currentUser);
+        // Commit message
+        fprintf(hf, "%s\n", message);
+        // Date and time
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char datetime[64];
+        strftime(datetime, sizeof(datetime), "%Y-%m-%d %H:%M:%S", tm_info);
+        fprintf(hf, "%s\n", datetime);
+        fclose(hf);
+    } else {
+        printf("Warning: Could not write to History.txt\n");
+    }
+    // --------------------------------------------------------
+
+    free(currentUser);
+}
+void pullFiles(void) {
+    char repo[100];
+    printf("Enter repository name: ");
+    scanf(" %99s", repo);
+
+    const char *home = getenv("HOME");
+    if (!home) {
+        fprintf(stderr, "ERROR: HOME not set\n");
+        return;
+    }
+
+    char repoPath[PATH_MAX];
+    snprintf(repoPath, PATH_MAX, "%s/CtrlZ/%s", home, repo);
+
+    struct stat st;
+    if (stat(repoPath, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        printf("Repository '%s' does not exist in %s/CtrlZ.\n", repo, home);
+        return;
+    }
+
+    // Open Config.txt
+    char configPath[PATH_MAX];
+    snprintf(configPath, PATH_MAX, "%s/Config.txt", repoPath);
+    FILE *cfg = fopen(configPath, "r");
+    if (!cfg) {
+        perror("Could not open Config.txt");
+        return;
+    }
+
+    char author[100] = "", collaborators[1024] = "", privacy[32] = "";
+    char line[1024];
+    while (fgets(line, sizeof(line), cfg)) {
+        if (strncmp(line, "Author:", 7) == 0) {
+            char *p = line + 7;
+            while (*p == ' ' || *p == '\t') p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            strncpy(author, p, sizeof(author) - 1);
+        } else if (strncmp(line, "Collaborators:", 14) == 0) {
+            char *p = line + 14;
+            while (*p == ' ' || *p == '\t') p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            strncpy(collaborators, p, sizeof(collaborators) - 1);
+        } else if (strncmp(line, "Privacy:", 8) == 0) {
+            char *p = line + 8;
+            while (*p == ' ' || *p == '\t') p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            strncpy(privacy, p, sizeof(privacy) - 1);
+        }
+    }
+    fclose(cfg);
+
+    // Get logged in user
+    char *currentUser = getLoggedInUser();
+    if (!currentUser) {
+        printf("No user is currently logged in.\n");
+        return;
+    }
+
+    // Check if user is author, collaborator, or public
+    int allowed = 0;
+    if (strcmp(currentUser, author) == 0) {
+        allowed = 1;
+    } else if (strlen(collaborators) > 0) {
+        char search[110];
+        snprintf(search, sizeof(search), "%s,", currentUser);
+        if (strstr(collaborators, search) != NULL) {
+            allowed = 1;
+        }
+    }
+    if (!allowed && (strcasecmp(privacy, "public") == 0)) {
+        allowed = 1;
+    }
+
+    if (!allowed) {
+        printf("You are not authorized to pull from this repository.\n");
+        free(currentUser);
+        return;
+    }
+
+    // Display available versions with messages
+    char historyPath[PATH_MAX];
+    snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
+    FILE *hf = fopen(historyPath, "r");
+    if (!hf) {
+        printf("No history found for this repository.\n");
+        free(currentUser);
+        return;
+    }
+
+    // Parse History.txt for version info
+    typedef struct { int version; char message[1024]; } VersionInfo;
+    VersionInfo versions[100];
+    int vcount = 0;
+    char vline[1024], mline[1024], dline[1024];
+    while (fgets(vline, sizeof(vline), hf) && fgets(mline, sizeof(mline), hf) && fgets(dline, sizeof(dline), hf)) {
+        int vnum = 0;
+        if (sscanf(vline, "Version_%d", &vnum) == 1) {
+            versions[vcount].version = vnum;
+            strncpy(versions[vcount].message, mline, sizeof(versions[vcount].message) - 1);
+            versions[vcount].message[strcspn(versions[vcount].message, "\r\n")] = '\0';
+            vcount++;
+        }
+    }
+    fclose(hf);
+
+    if (vcount == 0) {
+        printf("No versions found in history.\n");
+        free(currentUser);
+        return;
+    }
+
+    printf("Available versions:\n");
+    for (int i = 0; i < vcount; ++i) {
+        printf("%d. Version_%d - %s\n", i + 1, versions[i].version, versions[i].message);
+    }
+
+    int choice = 0;
+    printf("Enter the number of the version to pull: ");
+    if (scanf("%d", &choice) != 1 || choice < 1 || choice > vcount) {
+        printf("Invalid version choice.\n");
+        free(currentUser);
+        return;
+    }
+    int selectedVersion = versions[choice - 1].version;
+
+    // Ask for destination folder
+    char destPath[PATH_MAX];
+    printf("Enter the destination folder path: ");
+    getchar(); // clear newline left by previous scanf
+    if (fgets(destPath, sizeof(destPath), stdin) == NULL) {
+        printf("Invalid destination path input.\n");
+        free(currentUser);
+        return;
+    }
+    destPath[strcspn(destPath, "\r\n")] = '\0'; // Remove newline
+
+    // Resolve destination path
+    char absDestPath[PATH_MAX];
+    if (realpath(destPath, absDestPath) == NULL) {
+        perror("Invalid destination path");
+        free(currentUser);
+        return;
+    }
+
+    // Source version path
+    char srcVersionPath[PATH_MAX];
+    snprintf(srcVersionPath, PATH_MAX, "%s/Version_%d", repoPath, selectedVersion);
+
+    struct stat vst;
+    if (stat(srcVersionPath, &vst) != 0 || !S_ISDIR(vst.st_mode)) {
+        printf("Selected version directory does not exist.\n");
+        free(currentUser);
+        return;
+    }
+
+    // Copy files
+    copyAll(srcVersionPath, absDestPath);
+
+    printf("Pulled Version_%d to %s\n", selectedVersion, absDestPath);
+
+    free(currentUser);
+}
 void exitProgram(void)
 {
     printf("Exiting the program...\n");
