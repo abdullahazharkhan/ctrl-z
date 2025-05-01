@@ -114,7 +114,7 @@ ctrl-z/
 
 ## **Contributors**
 
-- **[Abdul Rafay Mughal](https://github.com/abdul-rafay-mughal)**
+- **[Abdul Rafay Mughal](https://github.com/AbdulRafayMughal86)**
 - **[Abdullah Azhar Khan](https://github.com/abdullahazharkhan)**
 - **[Muhammad Awais Shaikh](https://github.com/codexbegin14)**
 - **[Syed Muhammad Shubair Hyder](https://github.com/SyedMuhammadShubairHyder)**
