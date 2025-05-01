@@ -18,9 +18,11 @@ char *getLoggedInUser(void)
 {
     char path[PATH_MAX];
     getUserDataPath(path);
+
     FILE *f = fopen(path, "r");
     if (!f)
         return NULL;
+
     char line[512];
     if (!fgets(line, sizeof(line), f))
     {
@@ -29,17 +31,22 @@ char *getLoggedInUser(void)
     }
     fclose(f);
 
-    // Parse after colon+space
+    // Find the colon, skip it and any space
     char *p = strchr(line, ':');
     if (!p)
         return NULL;
-    p++; // skip colon
+    p++;
     if (*p == ' ')
-        p++; // skip optional space
-    // strip newline
-    char *nl = strchr(p, '\n');
-    if (nl)
-        *nl = '\0';
+        p++;
+
+    // Truncate at the first comma, if present
+    char *comma = strchr(p, ',');
+    if (comma)
+        *comma = '\0';
+
+    // Strip trailing newline or whitespace
+    p[strcspn(p, "\r\n")] = '\0';
+
     return strdup(p);
 }
 

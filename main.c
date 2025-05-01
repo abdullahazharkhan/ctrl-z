@@ -22,6 +22,7 @@ void publishRepository(void);
 void pushFiles(void);
 void pullFiles(void);
 void addCollaborator(void);
+void removeCollaborator(void);
 void exitProgram(void);
 void printProjectInfo(void);
 
@@ -47,16 +48,17 @@ int main(int argc, char *argv[])
         printf("3. Push your files\n");
         printf("4. Pull the files\n");
         printf("5. Add collaborator to your project\n");
+        printf("6. Remove collaborator from your project\n");
         if (!isSomeoneLoggedIn)
         {
-            printf("6. Login\n");
-            printf("7. Register as a new user\n");
-            printf("8. Exit\n");
+            printf("7. Login\n");
+            printf("8. Register as a new user\n");
+            printf("9. Exit\n");
         }
         else
         {
-            printf("6. Logout\n");
-            printf("7. Exit\n");
+            printf("7. Logout\n");
+            printf("8. Exit\n");
         }
         printf("--------------------------------------------------------\n");
 
@@ -88,6 +90,9 @@ int main(int argc, char *argv[])
             addCollaborator();
             break;
         case 6:
+            removeCollaborator();
+            break;
+        case 7:
             if (isSomeoneLoggedIn)
             {
                 logout(&isSomeoneLoggedIn);
@@ -97,7 +102,7 @@ int main(int argc, char *argv[])
                 login(&isSomeoneLoggedIn);
             }
             break;
-        case 7:
+        case 8:
             if (isSomeoneLoggedIn)
             {
                 exitProgram();
@@ -107,7 +112,7 @@ int main(int argc, char *argv[])
                 registerUser();
             }
             break;
-        case 8:
+        case 9:
             if (!isSomeoneLoggedIn)
             {
                 printf("Exiting the program...\n");
@@ -130,7 +135,6 @@ int main(int argc, char *argv[])
 void publishRepository(void) { printf("Publishing repository...\n"); }
 void pushFiles(void) { printf("Pushing files...\n"); }
 void pullFiles(void) { printf("Pulling files...\n"); }
-void addCollaborator(void) { printf("Adding collaborator...\n"); }
 void exitProgram(void)
 {
     printf("Exiting the program...\n");
@@ -324,4 +328,255 @@ void browsePublicRepositories(void)
     for (int i = 0; i < count; i++)
         free(names[i]);
     free(names);
+}
+
+void addCollaborator(void)
+{
+    char repo[100], collab[50];
+    printf("Enter repository name: ");
+    scanf(" %99s", repo);
+    printf("Enter collaborator's username: ");
+    scanf(" %49s", collab);
+
+    // 1) Check repo folder exists
+    char home[PATH_MAX], repoDir[PATH_MAX], cfgPath[PATH_MAX];
+    snprintf(home, PATH_MAX, "%s/CtrlZ", getenv("HOME"));
+    snprintf(repoDir, PATH_MAX, "%s/%s", home, repo);
+    struct stat st;
+    if (stat(repoDir, &st) < 0 || !S_ISDIR(st.st_mode))
+    {
+        printf("Error: repository '%s' not found.\n", repo);
+        return;
+    }
+
+    // 2) Load Config.txt and parse keys
+    snprintf(cfgPath, PATH_MAX, "%s/Config.txt", repoDir);
+    FILE *f = fopen(cfgPath, "r");
+    if (!f)
+    {
+        perror("fopen Config.txt");
+        return;
+    }
+
+    char buf[512];
+    char *author = NULL, *collabList = NULL, *privacy = NULL;
+    while (fgets(buf, sizeof(buf), f))
+    {
+        if (strncmp(buf, "Author:", 7) == 0)
+        {
+            char *p = buf + 7;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            author = strdup(p);
+        }
+        else if (strncmp(buf, "Collaborators:", 14) == 0)
+        {
+            char *p = buf + 14;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            collabList = strdup(p);
+        }
+        else if (strncmp(buf, "Privacy:", 8) == 0)
+        {
+            char *p = buf + 8;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            privacy = strdup(p);
+        }
+    }
+    fclose(f);
+
+    if (!author)
+    {
+        printf("Error: no Author in Config.txt\n");
+        goto done;
+    }
+    if (!privacy)
+        privacy = strdup("Private"); // default if missing
+    if (!collabList)
+        collabList = strdup(""); // start empty
+
+    // 3) Check ownership
+    char *current = getLoggedInUser();
+    if (!current || strcmp(current, author) != 0)
+    {
+        printf("Error: you do not own this repository.\n");
+        goto done;
+    }
+
+    // 4) Verify collaborator exists in UserData.txt
+    char udPath[PATH_MAX];
+    getUserDataPath(udPath);
+    FILE *uf = fopen(udPath, "r");
+    if (!uf)
+    {
+        perror("fopen UserData.txt");
+        goto done;
+    }
+    fgets(buf, sizeof(buf), uf); // skip header
+    int found = 0;
+    while (fgets(buf, sizeof(buf), uf))
+    {
+        char *c1 = strchr(buf, ',');
+        if (!c1)
+            continue;
+        char *usr = c1 + 1;
+        char *c2 = strchr(usr, ',');
+        if (c2)
+            *c2 = '\0';
+        if (strcmp(usr, collab) == 0)
+        {
+            found = 1;
+            break;
+        }
+    }
+    fclose(uf);
+    if (!found)
+    {
+        printf("Error: user '%s' not found.\n", collab);
+        goto done;
+    }
+
+    // 5) Append collaborator (ensure ending comma)
+    size_t needed = strlen(collabList) + strlen(collab) + 2;
+    collabList = realloc(collabList, needed);
+    strcat(collabList, collab);
+    strcat(collabList, ",");
+
+    // 6) Rewrite Config.txt in required format
+    f = fopen(cfgPath, "w");
+    if (!f)
+    {
+        perror("fopen write Config.txt");
+        goto done;
+    }
+    fprintf(f, "Author:%s\n", author);
+    fprintf(f, "Collaborators:%s\n", collabList);
+    fprintf(f, "Privacy:%s\n", privacy);
+    fclose(f);
+
+    printf("Added '%s' as collaborator to '%s'.\n", collab, repo);
+
+done:
+    free(author);
+    free(collabList);
+    free(privacy);
+}
+
+void removeCollaborator(void)
+{
+    char repo[100], collab[50];
+    printf("Enter repository name: ");
+    scanf(" %99s", repo);
+    printf("Enter collaborator's username to remove: ");
+    scanf(" %49s", collab);
+
+    // 1) Check repo folder exists
+    char home[PATH_MAX], repoDir[PATH_MAX], cfgPath[PATH_MAX];
+    snprintf(home, PATH_MAX, "%s/CtrlZ", getenv("HOME"));
+    snprintf(repoDir, PATH_MAX, "%s/%s", home, repo);
+    struct stat st;
+    if (stat(repoDir, &st) < 0 || !S_ISDIR(st.st_mode))
+    {
+        printf("Error: repository '%s' not found.\n", repo);
+        return;
+    }
+
+    // 2) Load Config.txt and parse keys
+    snprintf(cfgPath, PATH_MAX, "%s/Config.txt", repoDir);
+    FILE *f = fopen(cfgPath, "r");
+    if (!f)
+    {
+        perror("fopen Config.txt");
+        return;
+    }
+
+    char buf[512];
+    char *author = NULL, *collabList = NULL, *privacy = NULL;
+    while (fgets(buf, sizeof(buf), f))
+    {
+        if (strncmp(buf, "Author:", 7) == 0)
+        {
+            char *p = buf + 7;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            author = strdup(p);
+        }
+        else if (strncmp(buf, "Collaborators:", 14) == 0)
+        {
+            char *p = buf + 14;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            collabList = strdup(p);
+        }
+        else if (strncmp(buf, "Privacy:", 8) == 0)
+        {
+            char *p = buf + 8;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            p[strcspn(p, "\r\n")] = '\0';
+            privacy = strdup(p);
+        }
+    }
+    fclose(f);
+
+    if (!author)
+    {
+        printf("Error: no Author in Config.txt\n");
+        goto done;
+    }
+    if (!privacy)
+        privacy = strdup("Private");
+    if (!collabList)
+        collabList = strdup("");
+
+    // 3) Verify ownership
+    char *current = getLoggedInUser();
+    if (!current || strcmp(current, author) != 0)
+    {
+        printf("Error: you do not own this repository.\n");
+        goto done;
+    }
+
+    // 4) Remove collaborator occurrences of "username,"
+    {
+        char *dst = malloc(strlen(collabList) + 1), *d = dst;
+        char *tok = collabList, *next;
+        size_t keylen = strlen(collab) + 1; // include comma
+        while ((next = strstr(tok, collab)))
+        {
+            // copy up to the match
+            size_t chunk = next - tok;
+            memcpy(d, tok, chunk);
+            d += chunk;
+            tok = next + keylen; // skip over "username,"
+        }
+        // copy remainder
+        strcpy(d, tok);
+        free(collabList);
+        collabList = dst;
+    }
+
+    // 5) Rewrite Config.txt
+    f = fopen(cfgPath, "w");
+    if (!f)
+    {
+        perror("fopen write Config.txt");
+        goto done;
+    }
+    fprintf(f, "Author:%s\n", author);
+    fprintf(f, "Collaborators:%s\n", collabList);
+    fprintf(f, "Privacy:%s\n", privacy);
+    fclose(f);
+    printf("Removed '%s' from collaborators of '%s'.\n", collab, repo);
+
+done:
+    free(author);
+    free(collabList);
+    free(privacy);
 }
