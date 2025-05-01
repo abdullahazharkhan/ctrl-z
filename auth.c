@@ -114,7 +114,7 @@ void login(int *isSomeoneLoggedIn)
         else
         {
             // Note the space after the colon
-            fprintf(fw, "CurrentlyLoggedInUser: %s\n", user);
+            fprintf(fw, "CurrentlyLoggedInUser: %s,%s\n", user, pass);
             for (int i = 1; i < n; i++)
             {
                 fputs(lines[i], fw);
