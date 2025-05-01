@@ -1,7 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -21,11 +18,9 @@ char *getLoggedInUser(void)
 {
     char path[PATH_MAX];
     getUserDataPath(path);
-
     FILE *f = fopen(path, "r");
     if (!f)
         return NULL;
-
     char line[512];
     if (!fgets(line, sizeof(line), f))
     {
@@ -38,17 +33,14 @@ char *getLoggedInUser(void)
     char *p = strchr(line, ':');
     if (!p)
         return NULL;
-
     p++; // skip colon
     if (*p == ' ')
         p++; // skip optional space
-
-    // Strip newline
+    // strip newline
     char *nl = strchr(p, '\n');
     if (nl)
         *nl = '\0';
-
-    return strdup(p); // Caller must free
+    return strdup(p);
 }
 
 void login(int *isSomeoneLoggedIn)
@@ -62,15 +54,14 @@ void login(int *isSomeoneLoggedIn)
     char path[PATH_MAX];
     getUserDataPath(path);
 
-    // Read all lines into memory
+    // 1) Read all lines into memory
     FILE *f = fopen(path, "r");
     if (!f)
     {
-        perror("Error opening file");
+        perror("fopen");
         return;
     }
-
-    char *lines[1000] = {0};
+    char *lines[1000];
     int n = 0;
     char buf[512];
     while (fgets(buf, sizeof(buf), f) && n < 1000)
@@ -79,15 +70,15 @@ void login(int *isSomeoneLoggedIn)
     }
     fclose(f);
 
-    // Search for matching credentials
+    // 2) Scan lines[1..] for matching credentials using a temp buffer
     int found = 0;
     for (int i = 1; i < n; i++)
     {
         char temp[512];
-        strncpy(temp, lines[i], sizeof(temp) - 1);
+        strncpy(temp, lines[i], sizeof(temp));
         temp[sizeof(temp) - 1] = '\0';
 
-        // Parse line
+        // parse temp: Name,username,password\n
         char *p1 = strchr(temp, ',');
         if (!p1)
             continue;
@@ -114,13 +105,15 @@ void login(int *isSomeoneLoggedIn)
     }
     else
     {
+        // 3) Rewrite the file: only change the first line, copy the rest verbatim
         FILE *fw = fopen(path, "w");
         if (!fw)
         {
-            perror("Error opening file for writing");
+            perror("fopen");
         }
         else
         {
+            // Note the space after the colon
             fprintf(fw, "CurrentlyLoggedInUser: %s,%s\n", user, pass);
             for (int i = 1; i < n; i++)
             {
@@ -132,7 +125,7 @@ void login(int *isSomeoneLoggedIn)
         }
     }
 
-    // Free memory
+    // 4) Free the buffers
     for (int i = 0; i < n; i++)
     {
         free(lines[i]);
@@ -147,11 +140,10 @@ void logout(int *isSomeoneLoggedIn)
     FILE *f = fopen(path, "r");
     if (!f)
     {
-        perror("Error opening file");
+        perror("fopen");
         return;
     }
-
-    char *lines[1000] = {0};
+    char *lines[1000];
     int n = 0;
     char buf[512];
     while (fgets(buf, sizeof(buf), f) && n < 1000)
@@ -160,29 +152,23 @@ void logout(int *isSomeoneLoggedIn)
     }
     fclose(f);
 
-    // Rewrite the file
+    // rewrite
     FILE *fw = fopen(path, "w");
     if (!fw)
     {
-        perror("Error opening file for writing");
+        perror("fopen");
     }
     else
     {
         fprintf(fw, "CurrentlyLoggedInUser: NoUserIsLoggedIn\n");
         for (int i = 1; i < n; i++)
-        {
             fputs(lines[i], fw);
-        }
         fclose(fw);
         printf("Logged out successfully.\n");
         *isSomeoneLoggedIn = 0;
     }
-
-    // Free memory
     for (int i = 0; i < n; i++)
-    {
         free(lines[i]);
-    }
 }
 
 void registerUser(void)
@@ -201,65 +187,42 @@ void registerUser(void)
     FILE *f = fopen(path, "r");
     if (!f)
     {
-        perror("Error opening file");
+        perror("fopen");
         return;
     }
 
-    // Read all lines into memory
-    char *lines[1000] = {0};
-    int n = 0;
-    char buf[512];
-    fgets(buf, sizeof(buf), f); // Skip header
-    while (fgets(buf, sizeof(buf), f) && n < 1000)
-    {
-        lines[n++] = strdup(buf);
-    }
-    fclose(f);
+    // skip header
+    char line[512];
+    fgets(line, sizeof(line), f);
 
-    // Check for duplicate username
-    for (int i = 0; i < n; i++)
+    // check uniqueness
+    while (fgets(line, sizeof(line), f))
     {
-        char temp[512];
-        strncpy(temp, lines[i], sizeof(temp) - 1);
-        temp[sizeof(temp) - 1] = '\0';
-
-        char *p1 = strchr(temp, ',');
+        // parse username
+        char *p1 = strchr(line, ',');
         if (!p1)
             continue;
         char *p2 = strchr(p1 + 1, ',');
         if (!p2)
             continue;
         *p2 = '\0';
-
         if (strcmp(p1 + 1, user) == 0)
         {
             printf("Error: username '%s' already exists.\n", user);
-
-            // Free memory
-            for (int i = 0; i < n; i++)
-            {
-                free(lines[i]);
-            }
+            fclose(f);
             return;
         }
     }
+    fclose(f);
 
-    // Append the new user
+    // append new user
     f = fopen(path, "a");
     if (!f)
     {
-        perror("Error opening file for appending");
+        perror("fopen");
+        return;
     }
-    else
-    {
-        fprintf(f, "%s,%s,%s\n", fullName, user, pass);
-        fclose(f);
-        printf("User '%s' registered successfully.\n", user);
-    }
-
-    // Free memory
-    for (int i = 0; i < n; i++)
-    {
-        free(lines[i]);
-    }
+    fprintf(f, "%s,%s,%s\n", fullName, user, pass);
+    fclose(f);
+    printf("User '%s' registered successfully.\n", user);
 }
