@@ -315,5 +315,5 @@ void getStats(char *oldRepo, char* newRepo) {
             printf("Error reading file data for %s\n", oldFiles[commonOldIdx[i]]);
         }
     }
-    printf("==================================\n");
+    printf("==================================\n\n\n");
 }

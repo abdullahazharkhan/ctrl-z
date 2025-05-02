@@ -6,6 +6,25 @@
 #include <unistd.h>
 #include <limits.h>
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+void printProjectInfo(void)
+{
+    printf("--------------------------------------------------------\n");
+    printf("----------------------- CTRL + Z -----------------------\n");
+    printf("---------------- Version Control System ----------------\n");
+    printf("--------------------------------------------------------\n\n");
+}
+
+void exitProgram(void)
+{
+    printf("Exiting the program...\n");
+    exit(0);
+}
+
+
 void copyAll(const char *src, const char *dst) {
     struct stat st;
     if (stat(src, &st) != 0) return;
