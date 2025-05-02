@@ -221,6 +221,7 @@ void publishRepository(void) {
 
     printf("Repository '%s' created successfully with privacy '%s'.\n", repoName, privacy);
 }
+
 void pushFiles(void) {
     char repo[100];
     printf("Enter repository name: ");
@@ -352,38 +353,25 @@ void pushFiles(void) {
 
     printf("Pushed files to %s\n", newVersionPath);
 
-    // --- New code for commit message and history tracking ---
-    // 1. Take commit message and save to pushFiles.txt
+    // --- Commit message input and append to History.txt ---
     char message[1024];
     printf("Enter commit message: ");
-    getchar(); // clear newline left by previous scanf
+    // Only flush stdin if previous input left a newline
+    fflush(stdin);
+
     if (fgets(message, sizeof(message), stdin) == NULL) {
         strcpy(message, "No message provided.");
     }
-    message[strcspn(message, "\r\n")] = '\0'; // Remove newline
+    message[strcspn(message, "\r\n")] = '\0';
 
-    char pushFilePath[PATH_MAX];
-    snprintf(pushFilePath, PATH_MAX, "%s/pushFiles.txt", repoPath);
-    FILE *pf = fopen(pushFilePath, "w");
-    if (pf) {
-        fprintf(pf, "%s\n", message);
-        fclose(pf);
-    }
-
-    // 2. Append to History.txt in repo folder
+    // Append to History.txt in repo folder
     char historyPath[PATH_MAX];
     snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
     FILE *hf = fopen(historyPath, "a");
-    if (!hf) {
-        // Try to create if not exists
-        hf = fopen(historyPath, "w");
-    }
     if (hf) {
-        // Version and user
-        fprintf(hf, "Version_%d by %s\n", newVersion, currentUser);
-        // Commit message
-        fprintf(hf, "%s\n", message);
-        // Date and time
+        char *msg_ptr = message;
+        while (*msg_ptr == ' ' || *msg_ptr == '\t') msg_ptr++;
+        fprintf(hf, "Version_%d by %s: %s\n", newVersion, currentUser, msg_ptr);
         time_t now = time(NULL);
         struct tm *tm_info = localtime(&now);
         char datetime[64];
@@ -393,10 +381,61 @@ void pushFiles(void) {
     } else {
         printf("Warning: Could not write to History.txt\n");
     }
-    // --------------------------------------------------------
 
     free(currentUser);
+
+    // --- Stats generation and display ---
+    char prevVersionPath[PATH_MAX] = "";
+    if (newVersion > 1) {
+        snprintf(prevVersionPath, PATH_MAX, "%s/Version_%d", repoPath, newVersion - 1);
+    }
+    char statsPath[PATH_MAX];
+    snprintf(statsPath, PATH_MAX, "%s/Stats.txt", newVersionPath);
+
+    // Save current stdout file descriptor
+    int saved_stdout = dup(fileno(stdout));
+    FILE *statsFile = fopen(statsPath, "w");
+    if (statsFile) {
+        fflush(stdout);
+        dup2(fileno(statsFile), fileno(stdout));
+        if (newVersion > 1) {
+            getStats(prevVersionPath, newVersionPath);
+        } else {
+            printf("No previous version to compare for stats.\n");
+        }
+        fflush(stdout);
+        fclose(statsFile);
+        dup2(saved_stdout, fileno(stdout));
+        close(saved_stdout);
+    } else {
+        printf("Could not create Stats.txt for version %d\n", newVersion);
+    }
+
+    // Ask user if they want to display stats
+    char showStats[10];
+    printf("Do you want to display stats for this push? (yes/no): ");
+    if (fgets(showStats, sizeof(showStats), stdin) == NULL) {
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF);
+        showStats[0] = '\0';
+    }
+    showStats[strcspn(showStats, "\r\n")] = '\0';
+    if (strcasecmp(showStats, "yes") == 0 || strcasecmp(showStats, "y") == 0) {
+        FILE *statsFile = fopen(statsPath, "r");
+        if (statsFile) {
+            char buf[512];
+            printf("\n========== Stats for Version_%d ==========\n", newVersion);
+            while (fgets(buf, sizeof(buf), statsFile)) {
+                fputs(buf, stdout);
+            }
+            printf("==========================================\n");
+            fclose(statsFile);
+        } else {
+            printf("Stats.txt not found for this version.\n");
+        }
+    }
 }
+
 void pullFiles(void) {
     char repo[100];
     printf("Enter repository name: ");
@@ -552,13 +591,46 @@ void pullFiles(void) {
         return;
     }
 
-    // Copy files
-    copyAll(srcVersionPath, absDestPath);
+    // Only copy regular files from srcVersionPath to absDestPath
+    DIR *srcDir = opendir(srcVersionPath);
+    if (!srcDir) {
+        perror("opendir version folder");
+        free(currentUser);
+        return;
+    }
+    struct dirent *entry;
+    struct stat entry_st;
+    char srcFile[PATH_MAX], dstFile[PATH_MAX];
+    while ((entry = readdir(srcDir))) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        snprintf(srcFile, sizeof(srcFile), "%s/%s", srcVersionPath, entry->d_name);
+        if (stat(srcFile, &entry_st) == 0 && S_ISREG(entry_st.st_mode)) {
+            snprintf(dstFile, sizeof(dstFile), "%s/%s", absDestPath, entry->d_name);
+            FILE *fsrc = fopen(srcFile, "rb");
+            FILE *fdst = fopen(dstFile, "wb");
+            if (!fsrc || !fdst) {
+                if (fsrc) fclose(fsrc);
+                if (fdst) fclose(fdst);
+                printf("Failed to copy file: %s\n", srcFile);
+                continue;
+            }
+            char buf[8192];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0) {
+                fwrite(buf, 1, n, fdst);
+            }
+            fclose(fsrc);
+            fclose(fdst);
+        }
+    }
+    closedir(srcDir);
 
     printf("Pulled Version_%d to %s\n", selectedVersion, absDestPath);
 
     free(currentUser);
 }
+
 void exitProgram(void)
 {
     printf("Exiting the program...\n");

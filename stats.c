@@ -195,20 +195,32 @@ void getStats(char *oldRepo, char* newRepo) {
     DIR *dir = opendir(oldRepo);
     struct dirent *entry;
     while (dir && (entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
-            strncpy(oldFiles[oldCount], entry->d_name, MAX_FILENAME-1);
-            oldFiles[oldCount][MAX_FILENAME-1] = '\0';
-            oldCount++;
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..") && strcmp(entry->d_name, "Stats.txt") != 0) {
+            // Only include regular files, skip directories and others
+            char fullpath[PATH_MAX];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", oldRepo, entry->d_name);
+            struct stat st;
+            if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) {
+                strncpy(oldFiles[oldCount], entry->d_name, MAX_FILENAME-1);
+                oldFiles[oldCount][MAX_FILENAME-1] = '\0';
+                oldCount++;
+            }
         }
     }
     if (dir) closedir(dir);
 
     dir = opendir(newRepo);
     while (dir && (entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
-            strncpy(newFiles[newCount], entry->d_name, MAX_FILENAME-1);
-            newFiles[newCount][MAX_FILENAME-1] = '\0';
-            newCount++;
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..") && strcmp(entry->d_name, "Stats.txt") != 0) {
+            // Only include regular files, skip directories and others
+            char fullpath[PATH_MAX];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", newRepo, entry->d_name);
+            struct stat st;
+            if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode)) {
+                strncpy(newFiles[newCount], entry->d_name, MAX_FILENAME-1);
+                newFiles[newCount][MAX_FILENAME-1] = '\0';
+                newCount++;
+            }
         }
     }
     if (dir) closedir(dir);
