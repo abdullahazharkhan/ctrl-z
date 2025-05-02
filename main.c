@@ -140,7 +140,76 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void publishRepository(void) { printf("Publishing repository...\n"); }
+void publishRepository(void) {
+    char repoName[100], privacy[10];
+    
+    // 1. Ask for repo name
+    printf("Enter repository name: ");
+    scanf(" %99s", repoName);
+
+    // 2. Ask for privacy (public/private)
+    printf("Enter privacy (Public/Private): ");
+    scanf(" %9s", privacy);
+
+    // 3. Get base path using getUserDataPath
+    char basePath[PATH_MAX];
+    getUserDataPath(basePath); // gets ~/CtrlZ/UserData.txt
+
+    // Replace filename with repo directory
+    char *lastSlash = strrchr(basePath, '/');
+    if (lastSlash) *lastSlash = '\0';  // remove "/UserData.txt"
+
+    // Build repo directory path
+    char repoPath[PATH_MAX];
+    snprintf(repoPath, sizeof(repoPath), "%s/%s", basePath, repoName);
+
+    // Check if repo already exists
+    if (access(repoPath, F_OK) == 0) {
+        printf("Error: Repository '%s' already exists.\n", repoName);
+        return;
+    }
+
+    // 4. Create the repo folder
+    if (mkdir(repoPath, 0755) != 0) {
+        perror("mkdir");
+        return;
+    }
+
+    // 5. Create Config.txt file
+    char configPath[PATH_MAX];
+    snprintf(configPath, sizeof(configPath), "%s/Config.txt", repoPath);
+
+    FILE *cfg = fopen(configPath, "w");
+    if (!cfg) {
+        perror("fopen config");
+        return;
+    }
+
+
+    char *author = getLoggedInUser();
+    if (!author) author = "Unknown";
+
+    fprintf(cfg, "Author:%s\n", author);
+    fprintf(cfg, "Collaborators:\n");
+    fprintf(cfg, "Privacy:%s\n", privacy);
+    fclose(cfg);
+
+    if (author && strcmp(author, "Unknown") != 0)
+        free(author);
+
+    // 6. Create empty History.txt file
+    char historyPath[PATH_MAX];
+    snprintf(historyPath, sizeof(historyPath), "%s/History.txt", repoPath);
+
+    FILE *hist = fopen(historyPath, "w");
+    if (!hist) {
+        perror("fopen history");
+        return;
+    }
+    fclose(hist);
+
+    printf("Repository '%s' created successfully with privacy '%s'.\n", repoName, privacy);
+}
 void pushFiles(void) {
     char repo[100];
     printf("Enter repository name: ");
