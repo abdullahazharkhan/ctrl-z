@@ -78,7 +78,7 @@ int main(int argc, char *argv[])
         }
         else
         {
-            printf("1. Browse your repositories\n");
+            printf("1. Browse public repositories\n");
             printf("2. Publish your own repository\n");
             printf("3. Push your files\n");
             printf("4. Pull the files\n");
