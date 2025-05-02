@@ -162,45 +162,20 @@ int initProject(int *isSomeoneLoggedIn)
 
     if (stat(filepath, &st) == -1)
     {
-        // File missing → create with header
+        // File missing → create empty (no header)
         FILE *f = fopen(filepath, "w");
         if (!f)
         {
             perror("fopen UserData.txt");
             return -1;
         }
-        // Decide what goes in the header
-        const char *loginUser =
-            (*isSomeoneLoggedIn) ? getenv("USER") : "NoUserIsLoggedIn";
-        if (!loginUser)
-            loginUser = "NoUserIsLoggedIn";
-
-        // Note the space after colon
-        fprintf(f, "CurrentlyLoggedInUser: %s\n", loginUser);
         fclose(f);
-
         // No users yet, so flag stays as passed in
         return 0;
     }
 
-    // 3) File exists → read first line
-    {
-        FILE *f = fopen(filepath, "r");
-        if (!f)
-        {
-            perror("fopen existing UserData.txt");
-            return -1;
-        }
-        char line[512];
-        if (fgets(line, sizeof(line), f))
-        {
-            if (strstr(line, "NoUserIsLoggedIn"))
-                *isSomeoneLoggedIn = 0;
-            else
-                *isSomeoneLoggedIn = 1;
-        }
-        fclose(f);
-    }
+    // 3) File exists → nothing to do for login state
+    // Login state is managed by global variable now
 
     return 0;
 }
@@ -412,7 +387,6 @@ void addCollaborator(void)
         perror("fopen UserData.txt");
         goto done;
     }
-    fgets(buf, sizeof(buf), uf); // skip header
     int found = 0;
     while (fgets(buf, sizeof(buf), uf))
     {

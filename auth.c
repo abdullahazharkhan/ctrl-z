@@ -1,8 +1,13 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+
+// Global variable for current user (malloc'd, or NULL)
+char *currentUser = NULL;
 
 void getUserDataPath(char *outPath)
 {
@@ -16,38 +21,9 @@ void getUserDataPath(char *outPath)
 /// or NULL if none or on error. Caller must free().
 char *getLoggedInUser(void)
 {
-    char path[PATH_MAX];
-    getUserDataPath(path);
-
-    FILE *f = fopen(path, "r");
-    if (!f)
+    if (!currentUser)
         return NULL;
-
-    char line[512];
-    if (!fgets(line, sizeof(line), f))
-    {
-        fclose(f);
-        return NULL;
-    }
-    fclose(f);
-
-    // Find the colon, skip it and any space
-    char *p = strchr(line, ':');
-    if (!p)
-        return NULL;
-    p++;
-    if (*p == ' ')
-        p++;
-
-    // Truncate at the first comma, if present
-    char *comma = strchr(p, ',');
-    if (comma)
-        *comma = '\0';
-
-    // Strip trailing newline or whitespace
-    p[strcspn(p, "\r\n")] = '\0';
-
-    return strdup(p);
+    return strdup(currentUser);
 }
 
 void login(int *isSomeoneLoggedIn)
@@ -61,32 +37,18 @@ void login(int *isSomeoneLoggedIn)
     char path[PATH_MAX];
     getUserDataPath(path);
 
-    // 1) Read all lines into memory
     FILE *f = fopen(path, "r");
     if (!f)
     {
         perror("fopen");
         return;
     }
-    char *lines[1000];
-    int n = 0;
     char buf[512];
-    while (fgets(buf, sizeof(buf), f) && n < 1000)
-    {
-        lines[n++] = strdup(buf);
-    }
-    fclose(f);
-
-    // 2) Scan lines[1..] for matching credentials using a temp buffer
     int found = 0;
-    for (int i = 1; i < n; i++)
+    while (fgets(buf, sizeof(buf), f))
     {
-        char temp[512];
-        strncpy(temp, lines[i], sizeof(temp));
-        temp[sizeof(temp) - 1] = '\0';
-
-        // parse temp: Name,username,password\n
-        char *p1 = strchr(temp, ',');
+        // parse: Name,username,password\n
+        char *p1 = strchr(buf, ',');
         if (!p1)
             continue;
         char *usr = p1 + 1;
@@ -105,6 +67,7 @@ void login(int *isSomeoneLoggedIn)
             break;
         }
     }
+    fclose(f);
 
     if (!found)
     {
@@ -112,70 +75,24 @@ void login(int *isSomeoneLoggedIn)
     }
     else
     {
-        // 3) Rewrite the file: only change the first line, copy the rest verbatim
-        FILE *fw = fopen(path, "w");
-        if (!fw)
-        {
-            perror("fopen");
-        }
-        else
-        {
-            // Note the space after the colon
-            fprintf(fw, "CurrentlyLoggedInUser: %s,%s\n", user, pass);
-            for (int i = 1; i < n; i++)
-            {
-                fputs(lines[i], fw);
-            }
-            fclose(fw);
-            printf("Login successful. Welcome, %s!\n", user);
-            *isSomeoneLoggedIn = 1;
-        }
-    }
-
-    // 4) Free the buffers
-    for (int i = 0; i < n; i++)
-    {
-        free(lines[i]);
+        // Set global currentUser
+        if (currentUser)
+            free(currentUser);
+        currentUser = strdup(user);
+        printf("Login successful. Welcome, %s!\n", user);
+        *isSomeoneLoggedIn = 1;
     }
 }
 
 void logout(int *isSomeoneLoggedIn)
 {
-    char path[PATH_MAX];
-    getUserDataPath(path);
-
-    FILE *f = fopen(path, "r");
-    if (!f)
+    if (currentUser)
     {
-        perror("fopen");
-        return;
+        free(currentUser);
+        currentUser = NULL;
     }
-    char *lines[1000];
-    int n = 0;
-    char buf[512];
-    while (fgets(buf, sizeof(buf), f) && n < 1000)
-    {
-        lines[n++] = strdup(buf);
-    }
-    fclose(f);
-
-    // rewrite
-    FILE *fw = fopen(path, "w");
-    if (!fw)
-    {
-        perror("fopen");
-    }
-    else
-    {
-        fprintf(fw, "CurrentlyLoggedInUser: NoUserIsLoggedIn\n");
-        for (int i = 1; i < n; i++)
-            fputs(lines[i], fw);
-        fclose(fw);
-        printf("Logged out successfully.\n");
-        *isSomeoneLoggedIn = 0;
-    }
-    for (int i = 0; i < n; i++)
-        free(lines[i]);
+    printf("Logged out successfully.\n");
+    *isSomeoneLoggedIn = 0;
 }
 
 void registerUser(void)
@@ -198,9 +115,8 @@ void registerUser(void)
         return;
     }
 
-    // skip header
     char line[512];
-    fgets(line, sizeof(line), f);
+    // No header to skip
 
     // check uniqueness
     while (fgets(line, sizeof(line), f))
