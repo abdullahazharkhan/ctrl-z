@@ -16,11 +16,11 @@
 #define PATH_MAX 4096
 #endif
 
-// mutex for browsePublicRepositories()
+// mutex for browseRepositories()
 static pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Function prototypes
-void browsePublicRepositories(void);
+void browseRepositories(void);
 void publishRepository(void);
 void pushFiles(void);
 void pullFiles(void);
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
             switch (choice)
             {
             case 1:
-                browsePublicRepositories();
+                browseRepositories();
                 break;
             case 2:
                 registerUser();
@@ -85,7 +85,7 @@ int main(int argc, char *argv[])
         }
         else
         {
-            printf("1. Browse public repositories\n");
+            printf("1. Browse your repositories\n");
             printf("2. Publish your own repository\n");
             printf("3. Push your files\n");
             printf("4. Pull the files\n");
@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
             switch (choice)
             {
             case 1:
-                browsePublicRepositories();
+                browseRepositories();
                 break;
             case 2:
                 publishRepository();
@@ -148,8 +148,19 @@ void publishRepository(void) {
     scanf(" %99s", repoName);
 
     // 2. Ask for privacy (public/private)
-    printf("Enter privacy (Public/Private): ");
-    scanf(" %9s", privacy);
+    while (1) {
+        printf("Enter privacy (Public/Private): ");
+        scanf(" %9s", privacy);
+        if (strcasecmp(privacy, "Public") == 0 || strcasecmp(privacy, "Private") == 0) {
+            // Normalize to capitalized
+            if (strcasecmp(privacy, "public") == 0)
+                strcpy(privacy, "Public");
+            else
+                strcpy(privacy, "Private");
+            break;
+        }
+        printf("Invalid input. Please enter 'Public' or 'Private'.\n");
+    }
 
     // 3. Get base path using getUserDataPath
     char basePath[PATH_MAX];
@@ -634,44 +645,8 @@ int initProject(int *isSomeoneLoggedIn)
     return 0;
 }
 
-typedef struct
+void browseRepositories(void)
 {
-    char **names;   // Array of repo names
-    int start, end; // [start, end) range in that array
-    char ctrlz_path[PATH_MAX];
-} ThreadArg;
-
-// runner function for browsing public repositories
-void *thread_scan(void *arg_ptr)
-{
-    ThreadArg *arg = (ThreadArg *)arg_ptr;
-    char cfgpath[PATH_MAX + 50], line[512];
-    for (int i = arg->start; i < arg->end; i++)
-    {
-        snprintf(cfgpath, sizeof(cfgpath), "%s/%s/Config.txt",
-                 arg->ctrlz_path, arg->names[i]);
-        FILE *f = fopen(cfgpath, "r");
-        if (!f)
-            continue; // no config? skip.
-
-        while (fgets(line, sizeof(line), f))
-        {
-            if (strstr(line, "Privacy:public") || strstr(line, "Privacy:Public"))
-            {
-                pthread_mutex_lock(&print_mutex);
-                printf("Public repo: %s\n", arg->names[i]);
-                pthread_mutex_unlock(&print_mutex);
-                break;
-            }
-        }
-        fclose(f);
-    }
-    return NULL;
-}
-
-void browsePublicRepositories(void)
-{
-    // 1) build CtrlZ path
     char ctrlz[PATH_MAX];
     const char *home = getenv("HOME");
     if (!home)
@@ -716,31 +691,79 @@ void browsePublicRepositories(void)
         return;
     }
 
-    // 3) start 3 threads dividing the work
-    pthread_t threads[3];
-    ThreadArg args[3];
-    int base = count / 3, rem = count % 3, idx = 0;
-    for (int t = 0; t < 3; t++)
+    // Get current user (if any)
+    char *currentUser = getLoggedInUser();
+
+    // Scan each repo for privacy and user access
+    int found = 0;
+    for (int i = 0; i < count; i++)
     {
-        int len = base + (t < rem ? 1 : 0);
-        args[t].names = names;
-        args[t].start = idx;
-        args[t].end = idx + len;
-        strncpy(args[t].ctrlz_path, ctrlz, PATH_MAX);
-        pthread_create(&threads[t], NULL, thread_scan, &args[t]);
-        idx += len;
+        char cfgpath[PATH_MAX + 50], line[512];
+        snprintf(cfgpath, sizeof(cfgpath), "%s/%s/Config.txt", ctrlz, names[i]);
+        FILE *f = fopen(cfgpath, "r");
+        if (!f)
+            continue;
+
+        char author[100] = "", collaborators[1024] = "", privacy[32] = "";
+        while (fgets(line, sizeof(line), f))
+        {
+            if (strncmp(line, "Author:", 7) == 0)
+            {
+                char *p = line + 7;
+                while (*p == ' ' || *p == '\t') p++;
+                p[strcspn(p, "\r\n")] = '\0';
+                strncpy(author, p, sizeof(author) - 1);
+            }
+            else if (strncmp(line, "Collaborators:", 14) == 0)
+            {
+                char *p = line + 14;
+                while (*p == ' ' || *p == '\t') p++;
+                p[strcspn(p, "\r\n")] = '\0';
+                strncpy(collaborators, p, sizeof(collaborators) - 1);
+            }
+            else if (strncmp(line, "Privacy:", 8) == 0)
+            {
+                char *p = line + 8;
+                while (*p == ' ' || *p == '\t') p++;
+                p[strcspn(p, "\r\n")] = '\0';
+                strncpy(privacy, p, sizeof(privacy) - 1);
+            }
+        }
+        fclose(f);
+
+        int show = 0;
+        if (strcasecmp(privacy, "public") == 0)
+        {
+            show = 1;
+        }
+        else if (currentUser)
+        {
+            // Check if currentUser is author or in collaborators
+            if (strcmp(currentUser, author) == 0)
+                show = 1;
+            else if (strlen(collaborators) > 0)
+            {
+                char search[110];
+                snprintf(search, sizeof(search), "%s,", currentUser);
+                if (strstr(collaborators, search) != NULL)
+                    show = 1;
+            }
+        }
+        if (show)
+        {
+            printf("%s repo: %s\n", strcasecmp(privacy, "public") == 0 ? "Public" : "Private", names[i]);
+            found = 1;
+        }
     }
 
-    // 4) join
-    for (int t = 0; t < 3; t++)
-    {
-        pthread_join(threads[t], NULL);
-    }
+    if (!found)
+        printf("No accessible repositories found.\n");
 
-    // cleanup
     for (int i = 0; i < count; i++)
         free(names[i]);
     free(names);
+    if (currentUser)
+        free(currentUser);
 }
 
 void addCollaborator(void)
