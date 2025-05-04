@@ -1,3 +1,4 @@
+
 # **Ctrl + Z - Version Control System**
 
 ## **Table of Contents**
@@ -23,10 +24,10 @@
 
 The main objectives of this project are:
 
-- To provide basic version control functionalities (push, pull, revert, etc.).
+- To provide basic version control functionalities (push, pull, versioning, etc.).
 - To enable collaboration among multiple users with configurable access control.
 - To offer a simple, educational alternative to mainstream VCS tools like Git.
-- To demonstrate OS-level concepts such as file management, threading, and user authentication.
+- To demonstrate OS-level concepts such as file management, threading, and synchronization.
 
 ---
 
@@ -37,7 +38,7 @@ The main objectives of this project are:
 - **Versioning**: Push new versions, pull any previous version, and revert to older versions.
 - **Collaboration**: Add or remove collaborators with fine-grained access control.
 - **Stats & Diff**: Compare two versions of a repository and view detailed file differences.
-- **Encryption**: Secure files with encryption/decryption.
+- **Encryption**: Secure files using an encryption/decryption algorithm.
 - **Threaded Operations**: Uses multithreading for efficient repository browsing and file comparison.
 - **Configurable Access**: Public/private repositories and collaborator management via config files.
 - **Command-Line Interface**: Interactive menu-driven CLI for all operations.
@@ -75,7 +76,7 @@ The main objectives of this project are:
    - Public repositories can be browsed and pulled by anyone.
 6. **Encryption**
 
-   - Use the RC4 encryption utility to encrypt/decrypt files as needed.
+   - Use the encryption algorithm to encrypt/decrypt files as needed.
 
 ---
 
@@ -88,7 +89,7 @@ ctrl-z/
 ├── auth.c            # User authentication and registration
 ├── stats.c           # Version comparison and diff stats
 ├── utils.c           # Utility functions (file copy with encryption/decryption, etc.)
-├── version.c         # Versioning logic (push, pull, publish)
+├── version.c         # Versioning logic (push, pull, revert)
 │
 ├── Ascii.txt         # ASCII art for UI
 ├── README.md         # Project documentation
@@ -119,13 +120,11 @@ ctrl-z/
 ## **Future Enhancements**
 
 - Add a graphical user interface (GUI).
-- Implement more advanced diff and merge tools.
+- Implement more advanced difference and merge tools.
 - Add support for remote repositories and networking.
 - Improve encryption options and security.
 - Add automated tests and CI/CD integration.
 
 ---
-
-**Best of luck for the project!**
 
 _PS: This project is for educational purposes and demonstrates core OS and version control concepts in C._
