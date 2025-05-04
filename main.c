@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 {
     printProjectInfo();
 
-    int isSomeoneLoggedIn = 0;`
+    int isSomeoneLoggedIn = 0;
     if (initProject(&isSomeoneLoggedIn) != 0)
     {
         fprintf(stderr, "Failed to initialize project\n");
@@ -173,9 +173,6 @@ int initProject(int *isSomeoneLoggedIn)
         // No users yet, so flag stays as passed in
         return 0;
     }
-
-    // 3) File exists → nothing to do for login state
-    // Login state is managed by global variable now
 
     return 0;
 }
