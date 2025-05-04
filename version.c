@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/file.h>
 #include "utils.c"
 #include "auth.c"
 #include "stats.c"
@@ -222,13 +223,39 @@ void pushFiles(void)
     }
 
     printf("Resolved folder path: %s\n", absFolderPath);
+    
+    // --- Get commit message BEFORE locking ---
+    char message[1024];
+    printf("Enter commit message: ");
+    if (fgets(message, sizeof(message), stdin) == NULL)
+    {
+        strcpy(message, "No message provided.");
+    }
+    message[strcspn(message, "\r\n")] = '\0';
 
+    // NOW lock the repo - all user input is complete
+    char historyPath[PATH_MAX];
+    snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
+    FILE *repoLockFile = fopen(historyPath, "a+");
+    if (!repoLockFile) {
+        perror("Could not open History.txt for locking");
+        free(currentUser);
+        return;
+    }
+    // Block until we get exclusive lock
+    printf("Acquiring repository lock for synchronization...\n");
+    flock(fileno(repoLockFile), LOCK_EX);
+
+    // --- CRITICAL SECTION BEGINS ---
+    
     // Find the highest Version_N in the repo directory
     int maxVersion = 0;
     DIR *d = opendir(repoPath);
     if (!d)
     {
         perror("opendir repoPath");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -252,6 +279,8 @@ void pushFiles(void)
     if (mkdir(newVersionPath, 0777) != 0)
     {
         perror("mkdir new version");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -260,40 +289,19 @@ void pushFiles(void)
 
     printf("Pushed files to %s\n", newVersionPath);
 
-    // --- Commit message input and append to History.txt ---
-    char message[1024];
-    printf("Enter commit message: ");
-    if (fgets(message, sizeof(message), stdin) == NULL)
-    {
-        strcpy(message, "No message provided.");
-    }
-    message[strcspn(message, "\r\n")] = '\0';
+    // --- Append to History.txt with commit message ---
+    char *msg_ptr = message;
+    while (*msg_ptr == ' ' || *msg_ptr == '\t')
+        msg_ptr++;
+    fprintf(repoLockFile, "Version_%d by %s: %s\n", newVersion, currentUser, msg_ptr);
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char datetime[64];
+    strftime(datetime, sizeof(datetime), "%Y-%m-%d %H:%M:%S", tm_info);
+    fprintf(repoLockFile, "%s\n", datetime);
+    fflush(repoLockFile);
 
-    // Append to History.txt in repo folder
-    char historyPath[PATH_MAX];
-    snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
-    FILE *hf = fopen(historyPath, "a");
-    if (hf)
-    {
-        char *msg_ptr = message;
-        while (*msg_ptr == ' ' || *msg_ptr == '\t')
-            msg_ptr++;
-        fprintf(hf, "Version_%d by %s: %s\n", newVersion, currentUser, msg_ptr);
-        time_t now = time(NULL);
-        struct tm *tm_info = localtime(&now);
-        char datetime[64];
-        strftime(datetime, sizeof(datetime), "%Y-%m-%d %H:%M:%S", tm_info);
-        fprintf(hf, "%s\n", datetime);
-        fclose(hf);
-    }
-    else
-    {
-        printf("Warning: Could not write to History.txt\n");
-    }
-
-    free(currentUser);
-
-    // --- Stats generation and display (after decryption only) ---
+    // --- Stats generation (still inside lock) ---
     char prevVersionPath[PATH_MAX] = "";
     char prevTempPath[PATH_MAX] = "";
     char tempPath[PATH_MAX];
@@ -409,6 +417,14 @@ void pushFiles(void)
         system(rmcmd);
     }
 
+    // --- CRITICAL SECTION ENDS ---
+    // Release the repo lock
+    flock(fileno(repoLockFile), LOCK_UN);
+    fclose(repoLockFile);
+    
+    free(currentUser);
+
+    // Stats display (outside lock)
     // Ask user if they want to display stats
     char showStats[10];
     printf("Do you want to display stats for this push? (yes/no): ");
@@ -455,7 +471,7 @@ void pullFiles(void)
     }
 
     char repoPath[PATH_MAX];
-    snprintf(repoPath, sizeof(repoPath), "%s/CtrlZ/%s", home, repo);
+    snprintf(repoPath, PATH_MAX, "%s/CtrlZ/%s", home, repo);
 
     struct stat st;
     if (stat(repoPath, &st) != 0 || !S_ISDIR(st.st_mode))
@@ -537,11 +553,28 @@ void pullFiles(void)
         return;
     }
 
+    // Lock the repo by locking History.txt shared (block if push is in progress)
+    char historyPath[PATH_MAX];
+    snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
+    FILE *repoLockFile = fopen(historyPath, "r");
+    if (!repoLockFile) {
+        perror("Could not open History.txt for locking");
+        free(currentUser);
+        return;
+    }
+    // Block until we get shared lock
+    printf("Acquiring shared repository lock (multiple pulls allowed, will wait if push in progress)...\n");
+    flock(fileno(repoLockFile), LOCK_SH);
+
+    // --- CRITICAL SECTION BEGINS ---
+
     // List versions
     DIR *dir = opendir(repoPath);
     if (!dir)
     {
         perror("opendir repoPath");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -571,6 +604,8 @@ void pullFiles(void)
     if (vcount == 0)
     {
         printf("No versions found in repository folder.\n");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -585,6 +620,8 @@ void pullFiles(void)
     if (scanf("%d", &choice) != 1 || choice < 1 || choice > vcount)
     {
         printf("Invalid version choice.\n");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -597,6 +634,8 @@ void pullFiles(void)
     if (!fgets(destPath, sizeof(destPath), stdin))
     {
         printf("Invalid destination path input.\n");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -604,6 +643,8 @@ void pullFiles(void)
     if (!realpath(destPath, absDestPath))
     {
         perror("Invalid destination path");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -615,6 +656,8 @@ void pullFiles(void)
     if (!srcDir)
     {
         perror("opendir version folder");
+        flock(fileno(repoLockFile), LOCK_UN);
+        fclose(repoLockFile);
         free(currentUser);
         return;
     }
@@ -654,5 +697,11 @@ void pullFiles(void)
     closedir(srcDir);
 
     printf("Decrypted and pulled Version_%d to %s\n", selectedVersion, absDestPath);
+
+    // Critical section ends here
+    // Release the repo lock
+    flock(fileno(repoLockFile), LOCK_UN);
+    fclose(repoLockFile);
+
     free(currentUser);
 }

@@ -1,12 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
-// Global variable for current user (malloc'd, or NULL)
+// Global variable for current user (malloc, or NULL)
 char *currentUser = NULL;
 
 void getUserDataPath(char *outPath)
@@ -43,6 +44,8 @@ void login(int *isSomeoneLoggedIn)
         perror("fopen");
         return;
     }
+    // Add shared lock for reading
+    flock(fileno(f), LOCK_SH);
     char buf[512];
     int found = 0;
     while (fgets(buf, sizeof(buf), f))
@@ -108,17 +111,19 @@ void registerUser(void)
     char path[PATH_MAX];
     getUserDataPath(path);
 
-    FILE *f = fopen(path, "r");
+    // Open UserData.txt for read+append and lock exclusively for the whole registration
+    FILE *f = fopen(path, "a+");
     if (!f)
     {
         perror("fopen");
         return;
     }
-
-    char line[512];
-    // No header to skip
+    // Block until we get exclusive lock (blocks all readers/writers)
+    flock(fileno(f), LOCK_EX);
 
     // check uniqueness
+    rewind(f);
+    char line[512];
     while (fgets(line, sizeof(line), f))
     {
         // parse username
@@ -132,20 +137,18 @@ void registerUser(void)
         if (strcmp(p1 + 1, user) == 0)
         {
             printf("Error: username '%s' already exists.\n", user);
+            flock(fileno(f), LOCK_UN);
             fclose(f);
             return;
         }
     }
-    fclose(f);
 
     // append new user
-    f = fopen(path, "a");
-    if (!f)
-    {
-        perror("fopen");
-        return;
-    }
     fprintf(f, "%s,%s,%s\n", fullName, user, pass);
+    fflush(f);
+
+    // Release the lock and close
+    flock(fileno(f), LOCK_UN);
     fclose(f);
     printf("User '%s' registered successfully.\n", user);
 }

@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/file.h>
 #include "version.c"
 
 #ifndef PATH_MAX
@@ -235,7 +236,8 @@ void browseRepositories(void)
         FILE *f = fopen(cfgpath, "r");
         if (!f)
             continue;
-
+        // Add shared lock for reading Config.txt
+        flock(fileno(f), LOCK_SH);
         char author[100] = "", collaborators[1024] = "", privacy[32] = "";
         while (fgets(line, sizeof(line), f))
         {
@@ -325,7 +327,8 @@ void addCollaborator(void)
         perror("fopen Config.txt");
         return;
     }
-
+    // Add shared lock for reading config
+    flock(fileno(f), LOCK_SH);
     char buf[512];
     char *author = NULL, *collabList = NULL, *privacy = NULL;
     while (fgets(buf, sizeof(buf), f))
@@ -384,6 +387,9 @@ void addCollaborator(void)
         perror("fopen UserData.txt");
         goto done;
     }
+    // Add shared lock for reading user data
+    flock(fileno(uf), LOCK_SH);
+
     int found = 0;
     while (fgets(buf, sizeof(buf), uf))
     {
@@ -420,9 +426,13 @@ void addCollaborator(void)
         perror("fopen write Config.txt");
         goto done;
     }
+    // Add exclusive lock for writing config
+    flock(fileno(f), LOCK_EX);
     fprintf(f, "Author:%s\n", author);
     fprintf(f, "Collaborators:%s\n", collabList);
     fprintf(f, "Privacy:%s\n", privacy);
+    fflush(f);
+    flock(fileno(f), LOCK_UN);
     fclose(f);
 
     printf("Added '%s' as collaborator to '%s'.\n", collab, repo);
@@ -460,7 +470,8 @@ void removeCollaborator(void)
         perror("fopen Config.txt");
         return;
     }
-
+    // Add shared lock for reading config
+    flock(fileno(f), LOCK_SH);
     char buf[512];
     char *author = NULL, *collabList = NULL, *privacy = NULL;
     while (fgets(buf, sizeof(buf), f))
@@ -536,9 +547,13 @@ void removeCollaborator(void)
         perror("fopen write Config.txt");
         goto done;
     }
+    // Add exclusive lock for writing config
+    flock(fileno(f), LOCK_EX);
     fprintf(f, "Author:%s\n", author);
     fprintf(f, "Collaborators:%s\n", collabList);
     fprintf(f, "Privacy:%s\n", privacy);
+    fflush(f);
+    flock(fileno(f), LOCK_UN);
     fclose(f);
     printf("Removed '%s' from collaborators of '%s'.\n", collab, repo);
 
