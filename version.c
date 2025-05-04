@@ -11,6 +11,9 @@
 #include "auth.c"
 #include "stats.c"
 
+// Global encryption/decryption key
+unsigned char g_key = 50;
+
 void publishRepository(void)
 {
     char repoName[100], privacy[10];
@@ -253,24 +256,13 @@ void pushFiles(void)
         return;
     }
 
-    unsigned int encrKey = 0;
-    printf("Enter encryption key (0-255): ");
-    if (scanf("%u", &encrKey) != 1 || encrKey > 255)
-    {
-        printf("Invalid key, using 0\n");
-        encrKey = 0;
-    }
-
-    copyAll(absFolderPath, newVersionPath, encrKey);
+    copyAll(absFolderPath, newVersionPath, g_key);
 
     printf("Pushed files to %s\n", newVersionPath);
 
     // --- Commit message input and append to History.txt ---
     char message[1024];
     printf("Enter commit message: ");
-    // Only flush stdin if previous input left a newline
-    fflush(stdin);
-
     if (fgets(message, sizeof(message), stdin) == NULL)
     {
         strcpy(message, "No message provided.");
@@ -301,12 +293,85 @@ void pushFiles(void)
 
     free(currentUser);
 
-    // --- Stats generation and display ---
+    // --- Stats generation and display (after decryption only) ---
     char prevVersionPath[PATH_MAX] = "";
-    if (newVersion > 1)
-    {
-        snprintf(prevVersionPath, PATH_MAX, "%s/Version_%d", repoPath, newVersion - 1);
+    char prevTempPath[PATH_MAX] = "";
+    char tempPath[PATH_MAX];
+    snprintf(tempPath, sizeof(tempPath), "/tmp/CtrlZ_push_temp_%d", getpid());
+    mkdir(tempPath, 0700);
+
+    // Decrypt current version to tempPath
+    DIR *srcDir = opendir(newVersionPath);
+    if (srcDir) {
+        struct dirent *entry;
+        struct stat entry_st;
+        char srcFile[PATH_MAX], dstFile[PATH_MAX];
+        while ((entry = readdir(srcDir))) {
+            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+                continue;
+            snprintf(srcFile, sizeof(srcFile), "%s/%s", newVersionPath, entry->d_name);
+            if (stat(srcFile, &entry_st) == 0 && S_ISREG(entry_st.st_mode)) {
+                snprintf(dstFile, sizeof(dstFile), "%s/%s", tempPath, entry->d_name);
+                FILE *fsrc = fopen(srcFile, "rb");
+                FILE *fdst = fopen(dstFile, "wb");
+                if (!fsrc || !fdst) {
+                    if (fsrc) fclose(fsrc);
+                    if (fdst) fclose(fdst);
+                    continue;
+                }
+                unsigned char buf[8192];
+                size_t n;
+                while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0) {
+                    for (size_t i = 0; i < n; i++)
+                        buf[i] ^= g_key;
+                    fwrite(buf, 1, n, fdst);
+                }
+                fclose(fsrc);
+                fclose(fdst);
+            }
+        }
+        closedir(srcDir);
     }
+
+    // If previous version exists, decrypt it to another temp dir for stats
+    if (newVersion > 1) {
+        snprintf(prevVersionPath, sizeof(prevVersionPath), "%s/Version_%d", repoPath, newVersion - 1);
+        snprintf(prevTempPath, sizeof(prevTempPath), "/tmp/CtrlZ_push_temp_prev_%d", getpid());
+        mkdir(prevTempPath, 0700);
+
+        DIR *prevDir = opendir(prevVersionPath);
+        if (prevDir) {
+            struct dirent *entry;
+            struct stat entry_st;
+            char srcFile[PATH_MAX], dstFile[PATH_MAX];
+            while ((entry = readdir(prevDir))) {
+                if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+                    continue;
+                snprintf(srcFile, sizeof(srcFile), "%s/%s", prevVersionPath, entry->d_name);
+                if (stat(srcFile, &entry_st) == 0 && S_ISREG(entry_st.st_mode)) {
+                    snprintf(dstFile, sizeof(dstFile), "%s/%s", prevTempPath, entry->d_name);
+                    FILE *fsrc = fopen(srcFile, "rb");
+                    FILE *fdst = fopen(dstFile, "wb");
+                    if (!fsrc || !fdst) {
+                        if (fsrc) fclose(fsrc);
+                        if (fdst) fclose(fdst);
+                        continue;
+                    }
+                    unsigned char buf[8192];
+                    size_t n;
+                    while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0) {
+                        for (size_t i = 0; i < n; i++)
+                            buf[i] ^= g_key;
+                        fwrite(buf, 1, n, fdst);
+                    }
+                    fclose(fsrc);
+                    fclose(fdst);
+                }
+            }
+            closedir(prevDir);
+        }
+    }
+
     char statsPath[PATH_MAX];
     snprintf(statsPath, PATH_MAX, "%s/Stats.txt", newVersionPath);
 
@@ -319,7 +384,7 @@ void pushFiles(void)
         dup2(fileno(statsFile), fileno(stdout));
         if (newVersion > 1)
         {
-            getStats(prevVersionPath, newVersionPath);
+            getStats(prevTempPath, tempPath);
         }
         else
         {
@@ -333,6 +398,15 @@ void pushFiles(void)
     else
     {
         printf("Could not create Stats.txt for version %d\n", newVersion);
+    }
+
+    // Clean up temp directories
+    char rmcmd[PATH_MAX * 2];
+    snprintf(rmcmd, sizeof(rmcmd), "rm -rf '%s'", tempPath);
+    system(rmcmd);
+    if (newVersion > 1) {
+        snprintf(rmcmd, sizeof(rmcmd), "rm -rf '%s'", prevTempPath);
+        system(rmcmd);
     }
 
     // Ask user if they want to display stats
@@ -534,17 +608,6 @@ void pullFiles(void)
         return;
     }
 
-    // Decryption key
-    unsigned int k;
-    printf("Enter decryption key (0–255): ");
-    if (scanf("%u", &k) != 1 || k > 255)
-    {
-        printf("Invalid key, using 0\n");
-        k = 0;
-    }
-    while (getchar() != '\n')
-        ;
-
     // Copy & decrypt files
     char srcVersionPath[PATH_MAX];
     snprintf(srcVersionPath, sizeof(srcVersionPath), "%s/Version_%d", repoPath, selectedVersion);
@@ -559,7 +622,7 @@ void pullFiles(void)
     char srcFile[PATH_MAX], dstFile[PATH_MAX];
     while ((entry = readdir(srcDir)))
     {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") || !strcmp(entry->d_name, "Stats.txt"))
             continue;
         snprintf(srcFile, sizeof(srcFile), "%s/%s", srcVersionPath, entry->d_name);
         if (stat(srcFile, &entry_st) == 0 && S_ISREG(entry_st.st_mode))
@@ -581,7 +644,7 @@ void pullFiles(void)
             while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0)
             {
                 for (size_t i = 0; i < n; i++)
-                    buf[i] ^= (unsigned char)k;
+                    buf[i] ^= g_key;
                 fwrite(buf, 1, n, fdst);
             }
             fclose(fsrc);
