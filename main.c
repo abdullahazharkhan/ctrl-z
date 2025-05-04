@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 {
     printProjectInfo();
 
-    int isSomeoneLoggedIn = 0;
+    int isSomeoneLoggedIn = 0;`
     if (initProject(&isSomeoneLoggedIn) != 0)
     {
         fprintf(stderr, "Failed to initialize project\n");

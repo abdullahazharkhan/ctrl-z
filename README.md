@@ -1,4 +1,3 @@
-
 # **Ctrl + Z - Version Control System**
 
 ## **Table of Contents**
@@ -38,7 +37,7 @@ The main objectives of this project are:
 - **Versioning**: Push new versions, pull any previous version, and revert to older versions.
 - **Collaboration**: Add or remove collaborators with fine-grained access control.
 - **Stats & Diff**: Compare two versions of a repository and view detailed file differences.
-- **Encryption**: Secure files using RC4 encryption/decryption.
+- **Encryption**: Secure files with encryption/decryption.
 - **Threaded Operations**: Uses multithreading for efficient repository browsing and file comparison.
 - **Configurable Access**: Public/private repositories and collaborator management via config files.
 - **Command-Line Interface**: Interactive menu-driven CLI for all operations.
@@ -87,15 +86,11 @@ ctrl-z/
 │
 ├── main.c            # Main CLI and logic
 ├── auth.c            # User authentication and registration
-├── config.c          # Repository config management
-├── encryption.c      # RC4 encryption/decryption
 ├── stats.c           # Version comparison and diff stats
-├── utils.c           # Utility functions (file copy, etc.)
-├── version.c         # Versioning logic (push, pull, revert)
+├── utils.c           # Utility functions (file copy with encryption/decryption, etc.)
+├── version.c         # Versioning logic (push, pull, publish)
 │
 ├── Ascii.txt         # ASCII art for UI
-├── command.txt       # Build command
-├── readThis.txt      # Team roles and notes
 ├── README.md         # Project documentation
 ├── .gitignore        # Ignore compiled binaries
 └── .vscode/          # VSCode settings
