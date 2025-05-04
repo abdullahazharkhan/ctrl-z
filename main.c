@@ -286,7 +286,7 @@ void browseRepositories(void)
         }
         if (show)
         {
-            printf("%s repo: %s\n", strcasecmp(privacy, "public") == 0 ? "Public" : "Private", names[i]);
+            printf("%s repo: %s\n", strcasecmp(privacy, "public") == 0 ? "Public" : "Owner/Collaborator - Private", names[i]);
             found = 1;
         }
     }
