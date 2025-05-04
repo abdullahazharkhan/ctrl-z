@@ -53,7 +53,8 @@ int main(int argc, char *argv[])
             if (scanf("%d", &choice) != 1)
             {
                 printf("Invalid input. Please enter a number.\n");
-                while (getchar() != '\n');
+                while (getchar() != '\n')
+                    ;
                 continue;
             }
 
@@ -94,7 +95,8 @@ int main(int argc, char *argv[])
             if (scanf("%d", &choice) != 1)
             {
                 printf("Invalid input. Please enter a number.\n");
-                while (getchar() != '\n');
+                while (getchar() != '\n')
+                    ;
                 continue;
             }
 
@@ -178,6 +180,95 @@ int initProject(int *isSomeoneLoggedIn)
     return 0;
 }
 
+typedef struct
+{
+    char **names;   // array of folder names
+    int start, end; // [start, end) slice of that array
+    char ctrlz[PATH_MAX];
+    char *currentUser; // may be NULL
+} WorkerArgs;
+
+void *browse_worker(void *vp)
+{
+    WorkerArgs *args = vp;
+
+    for (int i = args->start; i < args->end; i++)
+    {
+        char cfgpath[PATH_MAX + 50];
+        snprintf(cfgpath, sizeof(cfgpath),
+                 "%s/%s/Config.txt",
+                 args->ctrlz,
+                 args->names[i]);
+
+        FILE *f = fopen(cfgpath, "r");
+        if (!f)
+            continue;
+
+        // shared lock
+        flock(fileno(f), LOCK_SH);
+
+        char line[512];
+        char author[100] = "", collaborators[1024] = "", privacy[32] = "";
+        while (fgets(line, sizeof(line), f))
+        {
+            if (strncmp(line, "Author:", 7) == 0)
+            {
+                char *p = line + 7;
+                while (*p == ' ' || *p == '\t')
+                    p++;
+                p[strcspn(p, "\r\n")] = '\0';
+                strncpy(author, p, sizeof(author) - 1);
+            }
+            else if (strncmp(line, "Collaborators:", 14) == 0)
+            {
+                char *p = line + 14;
+                while (*p == ' ' || *p == '\t')
+                    p++;
+                p[strcspn(p, "\r\n")] = '\0';
+                strncpy(collaborators, p, sizeof(collaborators) - 1);
+            }
+            else if (strncmp(line, "Privacy:", 8) == 0)
+            {
+                char *p = line + 8;
+                while (*p == ' ' || *p == '\t')
+                    p++;
+                p[strcspn(p, "\r\n")] = '\0';
+                strncpy(privacy, p, sizeof(privacy) - 1);
+            }
+        }
+        fclose(f);
+
+        int show = 0;
+        if (strcasecmp(privacy, "public") == 0)
+        {
+            show = 1;
+        }
+        else if (args->currentUser)
+        {
+            if (strcmp(args->currentUser, author) == 0)
+            {
+                show = 1;
+            }
+            else if (strstr(collaborators, args->currentUser))
+            {
+                show = 1;
+            }
+        }
+
+        if (show)
+        {
+            const char *label = (strcasecmp(privacy, "public") == 0)
+                                    ? "Public"
+                                    : "Owner/Collaborator - Private";
+            printf("%s repo: %s\n",
+                   label,
+                   args->names[i]);
+        }
+    }
+
+    return NULL;
+}
+
 void browseRepositories(void)
 {
     char ctrlz[PATH_MAX];
@@ -186,13 +277,13 @@ void browseRepositories(void)
         home = "";
     snprintf(ctrlz, sizeof(ctrlz), "%s/CtrlZ", home);
 
-    // 2) collect subdirectory names
     DIR *d = opendir(ctrlz);
     if (!d)
     {
         perror("opendir CtrlZ");
         return;
     }
+
     char **names = NULL;
     int count = 0;
     struct dirent *ent;
@@ -224,80 +315,43 @@ void browseRepositories(void)
         return;
     }
 
-    // Get current user (if any)
+    // get current user once
     char *currentUser = getLoggedInUser();
 
-    // Scan each repo for privacy and user access
-    int found = 0;
-    for (int i = 0; i < count; i++)
+    // prepare 3 threads
+    pthread_t threads[3];
+    WorkerArgs args[3];
+    int segment = count / 3;
+    for (int t = 0; t < 3; t++)
     {
-        char cfgpath[PATH_MAX + 50], line[512];
-        snprintf(cfgpath, sizeof(cfgpath), "%s/%s/Config.txt", ctrlz, names[i]);
-        FILE *f = fopen(cfgpath, "r");
-        if (!f)
-            continue;
-        // Add shared lock for reading Config.txt
-        flock(fileno(f), LOCK_SH);
-        char author[100] = "", collaborators[1024] = "", privacy[32] = "";
-        while (fgets(line, sizeof(line), f))
-        {
-            if (strncmp(line, "Author:", 7) == 0)
-            {
-                char *p = line + 7;
-                while (*p == ' ' || *p == '\t') p++;
-                p[strcspn(p, "\r\n")] = '\0';
-                strncpy(author, p, sizeof(author) - 1);
-            }
-            else if (strncmp(line, "Collaborators:", 14) == 0)
-            {
-                char *p = line + 14;
-                while (*p == ' ' || *p == '\t') p++;
-                p[strcspn(p, "\r\n")] = '\0';
-                strncpy(collaborators, p, sizeof(collaborators) - 1);
-            }
-            else if (strncmp(line, "Privacy:", 8) == 0)
-            {
-                char *p = line + 8;
-                while (*p == ' ' || *p == '\t') p++;
-                p[strcspn(p, "\r\n")] = '\0';
-                strncpy(privacy, p, sizeof(privacy) - 1);
-            }
-        }
-        fclose(f);
+        int start = t * segment;
+        int end = (t == 2) ? count : (start + segment);
 
-        int show = 0;
-        if (strcasecmp(privacy, "public") == 0)
-        {
-            show = 1;
-        }
-        else if (currentUser)
-        {
-            // Check if currentUser is author or in collaborators
-            if (strcmp(currentUser, author) == 0)
-                show = 1;
-            else if (strlen(collaborators) > 0)
-            {
-                char search[110];
-                snprintf(search, sizeof(search), "%s,", currentUser);
-                if (strstr(collaborators, search) != NULL)
-                    show = 1;
-            }
-        }
-        if (show)
-        {
-            printf("%s repo: %s\n", strcasecmp(privacy, "public") == 0 ? "Public" : "Owner/Collaborator - Private", names[i]);
-            found = 1;
-        }
+        args[t].names = names;
+        args[t].start = start;
+        args[t].end = end;
+        strncpy(args[t].ctrlz, ctrlz, PATH_MAX);
+        args[t].currentUser = currentUser;
+
+        pthread_create(&threads[t],
+                       NULL,
+                       browse_worker,
+                       &args[t]);
     }
 
-    if (!found)
-        printf("No accessible repositories found.\n");
+    // wait for all
+    for (int t = 0; t < 3; t++)
+    {
+        pthread_join(threads[t], NULL);
+    }
 
+    // cleanup
     for (int i = 0; i < count; i++)
+    {
         free(names[i]);
+    }
     free(names);
-    if (currentUser)
-        free(currentUser);
+    free(currentUser);
 }
 
 void addCollaborator(void)
