@@ -253,7 +253,15 @@ void pushFiles(void)
         return;
     }
 
-    copyAll(absFolderPath, newVersionPath);
+    unsigned int encrKey = 0;
+    printf("Enter encryption key (0-255): ");
+    if (scanf("%u", &encrKey) != 1 || encrKey > 255)
+    {
+        printf("Invalid key, using 0\n");
+        encrKey = 0;
+    }
+
+    copyAll(absFolderPath, newVersionPath, encrKey);
 
     printf("Pushed files to %s\n", newVersionPath);
 
@@ -373,7 +381,7 @@ void pullFiles(void)
     }
 
     char repoPath[PATH_MAX];
-    snprintf(repoPath, PATH_MAX, "%s/CtrlZ/%s", home, repo);
+    snprintf(repoPath, sizeof(repoPath), "%s/CtrlZ/%s", home, repo);
 
     struct stat st;
     if (stat(repoPath, &st) != 0 || !S_ISDIR(st.st_mode))
@@ -382,9 +390,9 @@ void pullFiles(void)
         return;
     }
 
-    // Open Config.txt
+    // Read Config.txt
     char configPath[PATH_MAX];
-    snprintf(configPath, PATH_MAX, "%s/Config.txt", repoPath);
+    snprintf(configPath, sizeof(configPath), "%s/Config.txt", repoPath);
     FILE *cfg = fopen(configPath, "r");
     if (!cfg)
     {
@@ -423,7 +431,6 @@ void pullFiles(void)
     }
     fclose(cfg);
 
-    // Get logged in user
     char *currentUser = getLoggedInUser();
     if (!currentUser)
     {
@@ -431,26 +438,24 @@ void pullFiles(void)
         return;
     }
 
-    // Check if user is author, collaborator, or public
     int allowed = 0;
     if (strcmp(currentUser, author) == 0)
     {
         allowed = 1;
     }
-    else if (strlen(collaborators) > 0)
+    else if (collaborators[0])
     {
         char search[110];
         snprintf(search, sizeof(search), "%s,", currentUser);
-        if (strstr(collaborators, search) != NULL)
+        if (strstr(collaborators, search))
         {
             allowed = 1;
         }
     }
-    if (!allowed && (strcasecmp(privacy, "public") == 0))
+    if (!allowed && strcasecmp(privacy, "Public") == 0)
     {
         allowed = 1;
     }
-
     if (!allowed)
     {
         printf("You are not authorized to pull from this repository.\n");
@@ -458,99 +463,91 @@ void pullFiles(void)
         return;
     }
 
-    // Display available versions with messages
-    char historyPath[PATH_MAX];
-    snprintf(historyPath, PATH_MAX, "%s/History.txt", repoPath);
-    FILE *hf = fopen(historyPath, "r");
-    if (!hf)
-    {
-        printf("No history found for this repository.\n");
-        free(currentUser);
-        return;
-    }
-
-    // Instead of reading History.txt, scan for Version_* directories
+    // List versions
     DIR *dir = opendir(repoPath);
-    if (!dir) {
+    if (!dir)
+    {
         perror("opendir repoPath");
         free(currentUser);
         return;
     }
-
-    typedef struct { int version; char name[100]; } VersionInfo;
+    typedef struct
+    {
+        int version;
+        char name[100];
+    } VersionInfo;
     VersionInfo versions[100];
     int vcount = 0;
     struct dirent *entry;
-
-    while ((entry = readdir(dir))) {
-        // look for names starting with "Version_"
-        if (strncmp(entry->d_name, "Version_", 8) == 0) {
+    while ((entry = readdir(dir)))
+    {
+        if (strncmp(entry->d_name, "Version_", 8) == 0)
+        {
             int vnum;
-            if (sscanf(entry->d_name + 8, "%d", &vnum) == 1) {
+            if (sscanf(entry->d_name + 8, "%d", &vnum) == 1)
+            {
                 versions[vcount].version = vnum;
-                strncpy(versions[vcount].name, entry->d_name, 100-1);
-                versions[vcount].name[100-1] = '\0';
+                strncpy(versions[vcount].name, entry->d_name, sizeof(versions[vcount].name) - 1);
                 vcount++;
             }
         }
     }
     closedir(dir);
 
-    if (vcount == 0) {
+    if (vcount == 0)
+    {
         printf("No versions found in repository folder.\n");
         free(currentUser);
         return;
     }
 
     printf("Available versions:\n");
-    for (int i = 0; i < vcount; ++i) {
+    for (int i = 0; i < vcount; i++)
+    {
         printf("%d. %s\n", i + 1, versions[i].name);
     }
-
-    int choice = 0;
+    int choice;
     printf("Enter the number of the version to pull: ");
-    if (scanf("%d", &choice) != 1 || choice < 1 || choice > vcount) {
+    if (scanf("%d", &choice) != 1 || choice < 1 || choice > vcount)
+    {
         printf("Invalid version choice.\n");
         free(currentUser);
         return;
     }
-    // now you have versions[choice-1].version
     int selectedVersion = versions[choice - 1].version;
 
-    // Ask for destination folder
-    char destPath[PATH_MAX];
+    // Destination folder
+    char destPath[PATH_MAX], absDestPath[PATH_MAX];
     printf("Enter the destination folder path: ");
-    getchar(); // clear newline left by previous scanf
-    if (fgets(destPath, sizeof(destPath), stdin) == NULL)
+    getchar();
+    if (!fgets(destPath, sizeof(destPath), stdin))
     {
         printf("Invalid destination path input.\n");
         free(currentUser);
         return;
     }
-    destPath[strcspn(destPath, "\r\n")] = '\0'; // Remove newline
-
-    // Resolve destination path
-    char absDestPath[PATH_MAX];
-    if (realpath(destPath, absDestPath) == NULL)
+    destPath[strcspn(destPath, "\r\n")] = '\0';
+    if (!realpath(destPath, absDestPath))
     {
         perror("Invalid destination path");
         free(currentUser);
         return;
     }
 
-    // Source version path
-    char srcVersionPath[PATH_MAX];
-    snprintf(srcVersionPath, PATH_MAX, "%s/Version_%d", repoPath, selectedVersion);
-
-    struct stat vst;
-    if (stat(srcVersionPath, &vst) != 0 || !S_ISDIR(vst.st_mode))
+    // Decryption key
+    unsigned int k;
+    printf("Enter decryption key (0–255): ");
+    if (scanf("%u", &k) != 1 || k > 255)
     {
-        printf("Selected version directory does not exist.\n");
-        free(currentUser);
-        return;
+        printf("Invalid key, using 0\n");
+        k = 0;
     }
+    while (getchar() != '\n')
+        ;
 
-    // Only copy regular files from srcVersionPath to absDestPath
+    // Copy & decrypt files
+    char srcVersionPath[PATH_MAX];
+    snprintf(srcVersionPath, sizeof(srcVersionPath), "%s/Version_%d", repoPath, selectedVersion);
     DIR *srcDir = opendir(srcVersionPath);
     if (!srcDir)
     {
@@ -558,12 +555,11 @@ void pullFiles(void)
         free(currentUser);
         return;
     }
-    entry = NULL;
     struct stat entry_st;
     char srcFile[PATH_MAX], dstFile[PATH_MAX];
     while ((entry = readdir(srcDir)))
     {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
             continue;
         snprintf(srcFile, sizeof(srcFile), "%s/%s", srcVersionPath, entry->d_name);
         if (stat(srcFile, &entry_st) == 0 && S_ISREG(entry_st.st_mode))
@@ -580,10 +576,12 @@ void pullFiles(void)
                 printf("Failed to copy file: %s\n", srcFile);
                 continue;
             }
-            char buf[8192];
+            unsigned char buf[8192];
             size_t n;
             while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0)
             {
+                for (size_t i = 0; i < n; i++)
+                    buf[i] ^= (unsigned char)k;
                 fwrite(buf, 1, n, fdst);
             }
             fclose(fsrc);
@@ -592,7 +590,6 @@ void pullFiles(void)
     }
     closedir(srcDir);
 
-    printf("Pulled Version_%d to %s\n", selectedVersion, absDestPath);
-
+    printf("Decrypted and pulled Version_%d to %s\n", selectedVersion, absDestPath);
     free(currentUser);
 }
